@@ -53,7 +53,7 @@ exfat_write_fat_entry(struct exfat_mount *emp, uint32_t cluster, uint32_t value)
     fat_offset = cluster * sizeof(uint32_t);
     sec_offset = fat_offset >> EXFAT_SECTOR_BITS;
 
-    error = bread(emp->mp->mnt_dev,
+    error = bread(EXFAT_DEV(emp->mp),
                  emp->boot.fat_offset + sec_offset,
                  EXFAT_SECTOR_SIZE, NOCRED, &bp);
     if (error) {

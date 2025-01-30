@@ -45,7 +45,7 @@ exfat_read_upcase_table(struct exfat_mount *emp, struct exfat_upcase *upcase)
         while (sectors-- > 0 && remaining > 0) {
             size_t count = MIN(remaining, EXFAT_SECTOR_SIZE);
 
-            error = bread(emp->mp->mnt_dev, sector++, EXFAT_SECTOR_SIZE, NOCRED, &bp);
+            error = bread(EXFAT_DEV(emp->mp), sector++, EXFAT_SECTOR_SIZE, NOCRED, &bp);
             if (error) {
                 brelse(bp);
                 free(upcase->table, M_EXFAT);
@@ -82,7 +82,7 @@ exfat_init_upcase(struct exfat_mount *emp)
     sector = emp->boot.cluster_heap_offset +
              ((emp->root_cluster - 2) << emp->boot.sectors_per_cluster_shift);
 
-    error = bread(emp->mp->mnt_dev, sector, EXFAT_SECTOR_SIZE, NOCRED, &bp);
+    error = bread(EXFAT_DEV(emp->mp), sector, EXFAT_SECTOR_SIZE, NOCRED, &bp);
     if (error) {
         brelse(bp);
         return error;

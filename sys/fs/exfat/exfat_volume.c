@@ -55,7 +55,7 @@ exfat_read_volume_label(struct exfat_mount *emp)
     sector = emp->boot.cluster_heap_offset +
              ((emp->root_cluster - 2) << emp->boot.sectors_per_cluster_shift);
 
-    error = bread(emp->mp->mnt_dev, sector, EXFAT_SECTOR_SIZE, NOCRED, &bp);
+    error = bread(EXFAT_DEV(emp->mp), sector, EXFAT_SECTOR_SIZE, NOCRED, &bp);
     if (error) {
         brelse(bp);
         return error;
@@ -120,7 +120,7 @@ exfat_write_volume_label(struct exfat_mount *emp, const char *label, size_t len)
     sector = emp->boot.cluster_heap_offset +
              ((emp->root_cluster - 2) << emp->boot.sectors_per_cluster_shift);
 
-    error = bread(emp->mp->mnt_dev, sector, EXFAT_SECTOR_SIZE, NOCRED, &bp);
+    error = bread(EXFAT_DEV(emp->mp), sector, EXFAT_SECTOR_SIZE, NOCRED, &bp);
     if (error) {
         brelse(bp);
         return error;
@@ -177,7 +177,7 @@ exfat_init_bitmap(struct exfat_mount *emp)
     sector = emp->boot.cluster_heap_offset +
              ((emp->root_cluster - 2) << emp->boot.sectors_per_cluster_shift);
 
-    error = bread(emp->mp->mnt_dev, sector, EXFAT_SECTOR_SIZE, NOCRED, &bp);
+    error = bread(EXFAT_DEV(emp->mp), sector, EXFAT_SECTOR_SIZE, NOCRED, &bp);
     if (error) {
         brelse(bp);
         return error;
@@ -227,7 +227,7 @@ exfat_read_bitmap_block(struct exfat_mount *emp, uint32_t block, struct buf **bp
              ((emp->bitmap_cluster - 2) << emp->boot.sectors_per_cluster_shift) +
              block;
 
-    return bread(emp->mp->mnt_dev, sector, EXFAT_SECTOR_SIZE, NOCRED, bpp);
+    return bread(EXFAT_DEV(emp->mp), sector, EXFAT_SECTOR_SIZE, NOCRED, bpp);
 }
 
 /*
@@ -424,7 +424,7 @@ exfat_update_serial(struct exfat_mount *emp)
         return EROFS;
 
     /* Read boot sector */
-    error = bread(emp->mp->mnt_dev, 0, EXFAT_SECTOR_SIZE, NOCRED, &bp);
+    error = bread(EXFAT_DEV(emp->mp), 0, EXFAT_SECTOR_SIZE, NOCRED, &bp);
     if (error) {
         brelse(bp);
         return error;
@@ -471,7 +471,7 @@ exfat_update_volume_flags(struct exfat_mount *emp, uint16_t flags)
         return EROFS;
 
     /* Read boot sector */
-    error = bread(emp->mp->mnt_dev, 0, EXFAT_SECTOR_SIZE, NOCRED, &bp);
+    error = bread(EXFAT_DEV(emp->mp), 0, EXFAT_SECTOR_SIZE, NOCRED, &bp);
     if (error) {
         brelse(bp);
         return error;
@@ -548,14 +548,45 @@ exfat_get_active_fat(struct exfat_mount *emp)
 void
 exfat_unix2exfat(struct timespec *ts, struct exfat_timespec *extime)
 {
-    struct tm tm;
-    time_t t = ts->tv_sec;
+    uint32_t days, secs, year, month, day, hour, min, sec;
 
-    gmtime_r(&t, &tm);
+    /* Convert seconds since epoch to date/time */
+    days = ts->tv_sec / 86400;
+    secs = ts->tv_sec % 86400;
 
-    extime->date = EXFAT_DATE(tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday);
-    extime->time = EXFAT_TIME(tm.tm_hour, tm.tm_min, tm.tm_sec);
-    extime->time_ms = ts->tv_nsec / 1000000;  /* Convert nanoseconds to milliseconds */
+    if (days < 365) {  /* Before 1981 */
+        year = 0;
+        month = 1;
+        day = 1;
+    } else {
+        /* Simple conversion - could be optimized */
+        year = 1970;
+        while (days >= 365) {
+            days -= 365;
+            if ((year % 4 == 0 && year % 100 != 0) || year % 400 == 0)
+                days--;
+            year++;
+        }
+        /* Convert remaining days to month/day */
+        month = 1;
+        while (days > 28) {
+            static const int mdays[] = {31,28,31,30,31,30,31,31,30,31,30,31};
+            if (days < mdays[month-1])
+                break;
+            days -= mdays[month-1];
+            month++;
+        }
+        day = days + 1;
+    }
+
+    hour = secs / 3600;
+    secs %= 3600;
+    min = secs / 60;
+    sec = secs % 60;
+
+    extime->date = EXFAT_DATE(year, month, day);
+    extime->time = EXFAT_TIME(hour, min, sec);
+    extime->time_ms = ts->tv_nsec / 1000000;
     extime->tz_offset = 0;  /* UTC */
 }
 
@@ -565,18 +596,36 @@ exfat_unix2exfat(struct timespec *ts, struct exfat_timespec *extime)
 void
 exfat_exfat2unix(struct exfat_timespec *extime, struct timespec *ts)
 {
-    struct tm tm;
+    uint32_t year, month, day, hour, min, sec;
+    uint32_t days = 0;
+    
+    year = EXFAT_YEAR(extime->date);
+    month = EXFAT_MONTH(extime->date);
+    day = EXFAT_DAY(extime->date);
+    hour = EXFAT_HOUR(extime->time);
+    min = EXFAT_MINUTE(extime->time);
+    sec = EXFAT_SECOND(extime->time);
 
-    tm.tm_year = EXFAT_YEAR(extime->date) - 1900;
-    tm.tm_mon = EXFAT_MONTH(extime->date) - 1;
-    tm.tm_mday = EXFAT_DAY(extime->date);
-    tm.tm_hour = EXFAT_HOUR(extime->time);
-    tm.tm_min = EXFAT_MINUTE(extime->time);
-    tm.tm_sec = EXFAT_SECOND(extime->time);
-    tm.tm_isdst = -1;
+    /* Convert to days since epoch */
+    if (year > 1970) {
+        days = (year - 1970) * 365;
+        days += (year - 1969) / 4;  /* Leap years */
+        days -= (year - 1901) / 100;
+        days += (year - 1601) / 400;
+    }
 
-    ts->tv_sec = timegm(&tm);
-    ts->tv_nsec = extime->time_ms * 1000000;  /* Convert milliseconds to nanoseconds */
+    /* Add days for months */
+    while (--month > 0) {
+        static const int mdays[] = {31,28,31,30,31,30,31,31,30,31,30,31};
+        days += mdays[month-1];
+        if (month == 2 && ((year % 4 == 0 && year % 100 != 0) || year % 400 == 0))
+            days++;
+    }
+
+    days += day - 1;
+
+    ts->tv_sec = days * 86400 + hour * 3600 + min * 60 + sec;
+    ts->tv_nsec = extime->time_ms * 1000000;
 }
 
 /*
@@ -600,7 +649,7 @@ exfat_update_volume_time(struct exfat_mount *emp)
     exfat_unix2exfat(&ts, &extime);
 
     /* Read boot sector */
-    error = bread(emp->mp->mnt_dev, 0, EXFAT_SECTOR_SIZE, NOCRED, &bp);
+    error = bread(EXFAT_DEV(emp->mp), 0, EXFAT_SECTOR_SIZE, NOCRED, &bp);
     if (error) {
         brelse(bp);
         return error;
@@ -643,7 +692,7 @@ exfat_update_percent_in_use(struct exfat_mount *emp)
     uint8_t percent = (used_clusters * 100) / total_clusters;
 
     /* Update boot sector */
-    error = bread(emp->mp->mnt_dev, 0, EXFAT_SECTOR_SIZE, NOCRED, &bp);
+    error = bread(EXFAT_DEV(emp->mp), 0, EXFAT_SECTOR_SIZE, NOCRED, &bp);
     if (error) {
         brelse(bp);
         return error;

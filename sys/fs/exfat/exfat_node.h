@@ -1,21 +1,28 @@
 #ifndef _FS_EXFAT_NODE_H_
 #define _FS_EXFAT_NODE_H_
 
-#include <sys/param.h>
 #include <sys/types.h>
 #include <sys/queue.h>
+#include <sys/timespec.h>
 
 /* In-memory node structure */
 struct exfat_node {
-    struct vnode *vp;                /* Associated vnode */
-    uint32_t cluster;                /* First cluster */
-    struct exfat_file_info finfo;    /* File information */
-    uint32_t diroffset;              /* Offset in directory */
-    LIST_ENTRY(exfat_node) node;     /* Hash chain */
+    struct vnode    *vnode;         /* Associated vnode */
+    uint32_t        cluster;        /* First cluster */
+    struct timespec create_time;    /* Creation time */
+    struct timespec modify_time;    /* Last modification time */
+    struct timespec access_time;    /* Last access time */
+    struct {
+        uint32_t    first_cluster;  /* First cluster of file */
+        uint64_t    file_size;      /* File size in bytes */
+        uint64_t    valid_size;     /* Valid data size */
+        uint16_t    attributes;     /* File attributes */
+    } finfo;
+    LIST_ENTRY(exfat_node) hash;    /* Hash chain */
 };
 
 #define VTOE(vp)     ((struct exfat_node *)(vp)->v_data)
-#define ETOV(ep)     ((ep)->vp)
+#define ETOV(ep)     ((ep)->vnode)
 
 /* Node hash table size */
 #define EXFAT_NODES_HASH_SIZE 64

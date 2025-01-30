@@ -30,7 +30,7 @@ exfat_read_cluster(struct exfat_mount *emp, uint32_t cluster, char *buffer)
     sector = emp->boot.cluster_heap_offset +
              ((cluster - 2) << emp->boot.sectors_per_cluster_shift);
 
-    error = bread(emp->mp->mnt_dev, sector, emp->bytes_per_cluster, NOCRED, &bp);
+    error = bread(EXFAT_DEV(emp->mp), sector, emp->bytes_per_cluster, NOCRED, &bp);
     if (error) {
         brelse(bp);
         return error;
@@ -54,7 +54,7 @@ exfat_write_cluster(struct exfat_mount *emp, uint32_t cluster, char *buffer)
     sector = emp->boot.cluster_heap_offset +
              ((cluster - 2) << emp->boot.sectors_per_cluster_shift);
 
-    error = bread(emp->mp->mnt_dev, sector, emp->bytes_per_cluster, NOCRED, &bp);
+    error = bread(EXFAT_DEV(emp->mp), sector, emp->bytes_per_cluster, NOCRED, &bp);
     if (error) {
         brelse(bp);
         return error;

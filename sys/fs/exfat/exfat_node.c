@@ -113,7 +113,7 @@ exfat_read_node_info(struct exfat_mount *emp, struct exfat_node *ep)
              ((ep->cluster - 2) << emp->boot.sectors_per_cluster_shift);
 
     /* Read sector containing directory entry */
-    error = bread(emp->mp->mnt_dev, sector, EXFAT_SECTOR_SIZE, NOCRED, &bp);
+    error = bread(EXFAT_DEV(emp->mp), sector, EXFAT_SECTOR_SIZE, NOCRED, &bp);
     if (error) {
         brelse(bp);
         return error;

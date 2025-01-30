@@ -77,7 +77,7 @@ exfat_read_fat_entry(struct exfat_mount *emp, uint32_t cluster, uint32_t *next)
     fat_offset = cluster * sizeof(uint32_t);
     sec_offset = fat_offset >> EXFAT_SECTOR_BITS;
 
-    error = bread(emp->mp->mnt_dev, 
+    error = bread(EXFAT_DEV(emp->mp), 
                  emp->boot.fat_offset + sec_offset,
                  EXFAT_SECTOR_SIZE, NOCRED, &bp);
     if (error) {
@@ -124,7 +124,7 @@ exfat_mount(struct mount *mp)
     emp->mp = mp;
 
     /* Read boot sector */
-    error = bread(mp->mnt_dev, 0, EXFAT_SECTOR_SIZE, NOCRED, &bp);
+    error = bread(EXFAT_DEV(mp), 0, EXFAT_SECTOR_SIZE, NOCRED, &bp);
     if (error) {
         free(emp, M_EXFAT);
         return error;

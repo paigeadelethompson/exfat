@@ -35,6 +35,7 @@
 #include <sys/module.h>
 #include <sys/mount.h>
 #include <sys/vnode.h>
+#include <sys/time.h>   /* For struct timespec */
 
 /* ExFAT specific constants */
 #define EXFAT_IOC_MAGIC       'E'
@@ -162,6 +163,8 @@ void exfat_cluster_free(struct exfat_mount *emp, uint32_t cluster);
 #define VFSTOEXFAT(mp)   ((struct exfat_mount *)((mp)->mnt_data))
 #define VTOVFS(vp)       ((vp)->v_mount)
 #define VTOVFSMP(vp)     ((struct exfat_mount *)((vp)->v_mount->mnt_data))
+#define VTOE(vp)   ((struct exfat_node *)(vp)->v_data)
+#define ETOV(ep)   ((ep)->vnode)
 
 /* Additional function prototypes */
 int exfat_get_node(struct mount *mp, uint32_t cluster, enum vtype type, struct vnode **vpp);
@@ -219,5 +222,13 @@ struct exfat_timespec {
     uint8_t  time_ms;      /* Milliseconds (0-199) */
     uint8_t  tz_offset;    /* Timezone offset in 15-minute increments */
 };
+
+/* Forward declarations */
+struct exfat_node;
+struct vnode;
+struct mount;
+
+/* Get device ID from mount structure */
+#define EXFAT_DEV(mp)    ((mp)->mnt_stat.f_fsid.val[0])
 
 #endif /* _FS_EXFAT_H_ */ 
