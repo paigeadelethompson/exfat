@@ -3,7 +3,7 @@
  *
  * Copyright (c) 2024 The FreeBSD Foundation
  *
- * This software was developed by {Your Name or Organization}.
+ * This software was developed by Paige A. Thompson (Ravenhammer Research.)
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -13,20 +13,8 @@
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
- * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
- * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
- * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
- * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
- * SUCH DAMAGE.
  */
-
+ 
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
@@ -55,7 +43,7 @@ exfat_read_volume_label(struct exfat_mount *emp)
     sector = emp->boot.cluster_heap_offset +
              ((emp->root_cluster - 2) << emp->boot.sectors_per_cluster_shift);
 
-    error = bread(EXFAT_DEV(emp->mp), sector, EXFAT_SECTOR_SIZE, NOCRED, &bp);
+    error = bread(emp->devvp, sector, EXFAT_SECTOR_SIZE, NOCRED, &bp);
     if (error) {
         brelse(bp);
         return error;
@@ -120,7 +108,7 @@ exfat_write_volume_label(struct exfat_mount *emp, const char *label, size_t len)
     sector = emp->boot.cluster_heap_offset +
              ((emp->root_cluster - 2) << emp->boot.sectors_per_cluster_shift);
 
-    error = bread(EXFAT_DEV(emp->mp), sector, EXFAT_SECTOR_SIZE, NOCRED, &bp);
+    error = bread(emp->devvp, sector, EXFAT_SECTOR_SIZE, NOCRED, &bp);
     if (error) {
         brelse(bp);
         return error;
@@ -177,7 +165,7 @@ exfat_init_bitmap(struct exfat_mount *emp)
     sector = emp->boot.cluster_heap_offset +
              ((emp->root_cluster - 2) << emp->boot.sectors_per_cluster_shift);
 
-    error = bread(EXFAT_DEV(emp->mp), sector, EXFAT_SECTOR_SIZE, NOCRED, &bp);
+    error = bread(emp->devvp, sector, EXFAT_SECTOR_SIZE, NOCRED, &bp);
     if (error) {
         brelse(bp);
         return error;
@@ -227,7 +215,7 @@ exfat_read_bitmap_block(struct exfat_mount *emp, uint32_t block, struct buf **bp
              ((emp->bitmap_cluster - 2) << emp->boot.sectors_per_cluster_shift) +
              block;
 
-    return bread(EXFAT_DEV(emp->mp), sector, EXFAT_SECTOR_SIZE, NOCRED, bpp);
+    return bread(emp->devvp, sector, EXFAT_SECTOR_SIZE, NOCRED, bpp);
 }
 
 /*
@@ -362,7 +350,7 @@ exfat_update_bitmap(struct exfat_mount *emp, uint32_t cluster, int allocated)
 /*
  * Validate volume label characters
  */
-static int
+int
 exfat_validate_label(const char *label, size_t len)
 {
     size_t i, j;
@@ -424,7 +412,7 @@ exfat_update_serial(struct exfat_mount *emp)
         return EROFS;
 
     /* Read boot sector */
-    error = bread(EXFAT_DEV(emp->mp), 0, EXFAT_SECTOR_SIZE, NOCRED, &bp);
+    error = bread(emp->devvp, 0, EXFAT_SECTOR_SIZE, NOCRED, &bp);
     if (error) {
         brelse(bp);
         return error;
@@ -471,7 +459,7 @@ exfat_update_volume_flags(struct exfat_mount *emp, uint16_t flags)
         return EROFS;
 
     /* Read boot sector */
-    error = bread(EXFAT_DEV(emp->mp), 0, EXFAT_SECTOR_SIZE, NOCRED, &bp);
+    error = bread(emp->devvp, 0, EXFAT_SECTOR_SIZE, NOCRED, &bp);
     if (error) {
         brelse(bp);
         return error;
@@ -635,7 +623,6 @@ int
 exfat_update_volume_time(struct exfat_mount *emp)
 {
     struct buf *bp;
-    struct exfat_boot_record *boot;
     struct timespec ts;
     struct exfat_timespec extime;
     int error;
@@ -649,16 +636,11 @@ exfat_update_volume_time(struct exfat_mount *emp)
     exfat_unix2exfat(&ts, &extime);
 
     /* Read boot sector */
-    error = bread(EXFAT_DEV(emp->mp), 0, EXFAT_SECTOR_SIZE, NOCRED, &bp);
+    error = bread(emp->devvp, 0, EXFAT_SECTOR_SIZE, NOCRED, &bp);
     if (error) {
         brelse(bp);
         return error;
     }
-
-    /* Update creation time */
-    boot = (struct exfat_boot_record *)bp->b_data;
-    // Note: ExFAT spec doesn't define where to store volume creation time
-    // This would need to be stored in a custom location or metadata
 
     /* Write back */
     error = bwrite(bp);
@@ -692,7 +674,7 @@ exfat_update_percent_in_use(struct exfat_mount *emp)
     uint8_t percent = (used_clusters * 100) / total_clusters;
 
     /* Update boot sector */
-    error = bread(EXFAT_DEV(emp->mp), 0, EXFAT_SECTOR_SIZE, NOCRED, &bp);
+    error = bread(emp->devvp, 0, EXFAT_SECTOR_SIZE, NOCRED, &bp);
     if (error) {
         brelse(bp);
         return error;
@@ -708,6 +690,30 @@ exfat_update_percent_in_use(struct exfat_mount *emp)
 
     /* Update mount structure */
     emp->boot.percent_in_use = percent;
+
+    return 0;
+}
+
+/* Add function prototypes */
+static int exfat_read_boot_record(struct exfat_mount *emp);
+static int exfat_check_volume_dirty(struct exfat_mount *emp);
+
+static int
+exfat_read_boot_record(struct exfat_mount *emp)
+{
+    struct buf *bp;
+    int error;
+
+    /* Read boot sector */
+    error = bread(emp->devvp, 0, EXFAT_SECTOR_SIZE, NOCRED, &bp);
+    if (error) {
+        brelse(bp);
+        return error;
+    }
+
+    /* Copy boot sector */
+    memcpy(&emp->boot, bp->b_data, sizeof(struct exfat_boot_record));
+    brelse(bp);
 
     return 0;
 } 

@@ -15,18 +15,7 @@
  *    documentation and/or other materials provided with the distribution.
  */
  
-#ifndef _FS_EXFAT_UPCASE_H_
-#define _FS_EXFAT_UPCASE_H_
-
-#include <sys/param.h>
-#include <sys/types.h>
-#include "exfat.h"
-
-/* Function prototypes */
-int exfat_init_upcase(struct exfat_mount *emp);
-void exfat_cleanup_upcase(struct exfat_mount *emp);
-uint16_t exfat_upcase(struct exfat_mount *emp, uint16_t unicode);
-int exfat_name_compare(struct exfat_mount *emp, const uint16_t *name1,
-                      const uint16_t *name2, size_t len);
-
-#endif /* _FS_EXFAT_UPCASE_H_ */ 
+/* FAT entry operations */
+int exfat_write_fat_entry(struct exfat_mount *emp, uint32_t cluster, uint32_t value);
+int exfat_read_fat_entry(struct exfat_mount *emp, uint32_t cluster, uint32_t *value);
+int exfat_update_bitmap(struct exfat_mount *emp, uint32_t cluster, int allocated); 

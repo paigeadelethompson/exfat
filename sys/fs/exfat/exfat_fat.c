@@ -3,7 +3,7 @@
  *
  * Copyright (c) 2024 The FreeBSD Foundation
  *
- * This software was developed by {Your Name or Organization}.
+ * This software was developed by Paige A. Thompson (Ravenhammer Research.)
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -13,18 +13,6 @@
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
- * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
- * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
- * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
- * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
- * SUCH DAMAGE.
  */
 
 #include <sys/param.h>
@@ -37,11 +25,12 @@
 #include <sys/endian.h>
 
 #include "exfat.h"
+#include "exfat_fat.h"
 
 /*
  * Write a FAT entry
  */
-static int
+int
 exfat_write_fat_entry(struct exfat_mount *emp, uint32_t cluster, uint32_t value)
 {
     struct buf *bp;
@@ -53,9 +42,7 @@ exfat_write_fat_entry(struct exfat_mount *emp, uint32_t cluster, uint32_t value)
     fat_offset = cluster * sizeof(uint32_t);
     sec_offset = fat_offset >> EXFAT_SECTOR_BITS;
 
-    error = bread(EXFAT_DEV(emp->mp),
-                 emp->boot.fat_offset + sec_offset,
-                 EXFAT_SECTOR_SIZE, NOCRED, &bp);
+    error = bread(emp->devvp, emp->boot.fat_offset + sec_offset, EXFAT_SECTOR_SIZE, NOCRED, &bp);
     if (error) {
         brelse(bp);
         return error;
@@ -174,5 +161,31 @@ exfat_cluster_extend(struct exfat_mount *emp, uint32_t *cluster)
     }
 
     *cluster = new_cluster;
+    return 0;
+}
+
+/* Read a FAT entry */
+int
+exfat_read_fat_entry(struct exfat_mount *emp, uint32_t cluster, uint32_t *value)
+{
+    struct buf *bp;
+    uint32_t fat_offset;
+    uint32_t sec_offset;
+    uint32_t *entry;
+    int error;
+
+    fat_offset = cluster * sizeof(uint32_t);
+    sec_offset = fat_offset >> EXFAT_SECTOR_BITS;
+
+    error = bread(emp->devvp, emp->boot.fat_offset + sec_offset, EXFAT_SECTOR_SIZE, NOCRED, &bp);
+    if (error) {
+        brelse(bp);
+        return error;
+    }
+
+    entry = (uint32_t *)(bp->b_data + (fat_offset & (EXFAT_SECTOR_SIZE - 1)));
+    *value = le32toh(*entry);
+
+    brelse(bp);
     return 0;
 } 

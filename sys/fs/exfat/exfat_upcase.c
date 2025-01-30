@@ -1,3 +1,20 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2024 The FreeBSD Foundation
+ *
+ * This software was developed by Paige A. Thompson (Ravenhammer Research.)
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ */
+
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
@@ -17,6 +34,9 @@ struct exfat_upcase {
     uint32_t checksum;
 };
 
+/* Add function prototypes */
+static int exfat_read_upcase_table(struct exfat_mount *emp, struct exfat_upcase *upcase);
+
 /*
  * Read upcase table from disk
  */
@@ -35,32 +55,24 @@ exfat_read_upcase_table(struct exfat_mount *emp, struct exfat_upcase *upcase)
     /* Read table data */
     cluster = emp->upcase_cluster;
     remaining = upcase->size * sizeof(uint16_t);
+    sector = emp->boot.cluster_heap_offset +
+             ((cluster - 2) << emp->boot.sectors_per_cluster_shift);
 
-    while (remaining > 0 && cluster != EXFAT_CLUSTER_END) {
-        uint32_t sectors = emp->boot.sectors_per_cluster_shift;
-        
-        sector = emp->boot.cluster_heap_offset +
-                 ((cluster - 2) << emp->boot.sectors_per_cluster_shift);
-
-        while (sectors-- > 0 && remaining > 0) {
-            size_t count = MIN(remaining, EXFAT_SECTOR_SIZE);
-
-            error = bread(EXFAT_DEV(emp->mp), sector++, EXFAT_SECTOR_SIZE, NOCRED, &bp);
-            if (error) {
-                brelse(bp);
-                free(upcase->table, M_EXFAT);
-                return error;
-            }
-
-            memcpy(table, bp->b_data, count);
+    while (remaining > 0) {
+        error = bread(emp->devvp, sector, EXFAT_SECTOR_SIZE, NOCRED, &bp);
+        if (error) {
             brelse(bp);
-
-            table += count / sizeof(uint16_t);
-            remaining -= count;
+            free(table, M_EXFAT);
+            return error;
         }
 
-        if (remaining > 0)
-            cluster = exfat_cluster_next(emp, cluster);
+        /* Copy data from buffer */
+        size_t size = MIN(remaining, EXFAT_SECTOR_SIZE);
+        memcpy(table, bp->b_data, size);
+        brelse(bp);
+        sector++;
+        table += size / sizeof(uint16_t);
+        remaining -= size;
     }
 
     return 0;
@@ -82,7 +94,7 @@ exfat_init_upcase(struct exfat_mount *emp)
     sector = emp->boot.cluster_heap_offset +
              ((emp->root_cluster - 2) << emp->boot.sectors_per_cluster_shift);
 
-    error = bread(EXFAT_DEV(emp->mp), sector, EXFAT_SECTOR_SIZE, NOCRED, &bp);
+    error = bread(emp->devvp, sector, EXFAT_SECTOR_SIZE, NOCRED, &bp);
     if (error) {
         brelse(bp);
         return error;
