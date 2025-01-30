@@ -1,3 +1,20 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2024 The FreeBSD Foundation
+ *
+ * This software was developed by Paige A. Thompson (Ravenhammer Research.)
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ */
+ 
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
@@ -11,6 +28,7 @@
 #include "exfat.h"
 #include "exfat_node.h"
 #include "exfat_dir.h"
+#include "exfat_upcase.h"  /* For exfat_upcase() */
 
 /*
  * Initialize directory scanning
@@ -51,7 +69,7 @@ exfat_next_dirent(struct exfat_scan_ctx *ctx, struct exfat_direntry_set *es)
                 (ctx->offset >> EXFAT_SECTOR_BITS);
 
         /* Read the sector */
-        error = bread(ctx->emp->mp->mnt_dev, sector, EXFAT_SECTOR_SIZE, NOCRED, &bp);
+        error = bread(ctx->emp->devvp, sector, EXFAT_SECTOR_SIZE, NOCRED, &bp);
         if (error) {
             ctx->bp = NULL;
             return error;
@@ -149,13 +167,13 @@ exfat_name_match(struct exfat_mount *emp, const struct exfat_direntry_set *es,
         return 0;
 
     /* Compare names using upcase table */
-    return (exfat_name_compare(emp, uname, es->name[0].name, ulen) == 0);
+    return (exfat_name_compare(emp, uname, es->name[0].name, MIN(ulen, es->stream.name_length)) == 0);
 }
 
 /*
  * Calculate name hash
  */
-static uint16_t
+uint16_t
 exfat_calc_name_hash(struct exfat_mount *emp, const uint16_t *name, size_t len)
 {
     uint16_t hash = 0;

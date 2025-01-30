@@ -1,3 +1,20 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2024 The FreeBSD Foundation
+ *
+ * This software was developed by Paige A. Thompson (Ravenhammer Research.)
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ */
+ 
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
@@ -8,9 +25,79 @@
 #include <sys/buf.h>
 #include <sys/endian.h>
 #include <sys/time.h>
+#include <sys/timespec.h>
 
 #include "exfat.h"
 #include "exfat_dir.h"
+#include "exfat_node.h"
+
+/* Time conversion constants */
+#define SECS_PER_MIN    60
+#define SECS_PER_HOUR   (60 * SECS_PER_MIN)
+#define SECS_PER_DAY    (24 * SECS_PER_HOUR)
+#define DAYS_PER_YEAR   365
+#define DAYS_PER_LEAP   366
+
+/* Calculate if year is leap year */
+static int
+is_leap_year(int year)
+{
+    return (year % 4 == 0 && (year % 100 != 0 || year % 400 == 0));
+}
+
+/* Calculate days in month */
+static int
+days_in_month(int year, int month)
+{
+    static const int days[] = {31,28,31,30,31,30,31,31,30,31,30,31};
+    return (month == 2 && is_leap_year(year)) ? 29 : days[month-1];
+}
+
+/* Calculate seconds in year */
+static int
+secs_per_year(int year)
+{
+    return is_leap_year(year) ? (DAYS_PER_LEAP * SECS_PER_DAY) : 
+                                (DAYS_PER_YEAR * SECS_PER_DAY);
+}
+
+/* Calculate seconds in month */
+static int
+secs_per_month(int year, int month)
+{
+    return days_in_month(year, month) * SECS_PER_DAY;
+}
+
+/* Convert Unix timestamp to ExFAT date/time */
+void unix_time_to_exfat(const struct timespec *ts, uint32_t *date, uint32_t *time)
+{
+    int year, month, day, hour, min, sec;
+    time_t t = ts->tv_sec;
+
+    /* Convert seconds since 1970 to date/time */
+    year = 1970;
+    while (t >= secs_per_year(year)) {
+        t -= secs_per_year(year);
+        year++;
+    }
+
+    month = 1;
+    while (t >= secs_per_month(year, month)) {
+        t -= secs_per_month(year, month);
+        month++;
+    }
+
+    day = 1 + (t / SECS_PER_DAY);
+    t = t % SECS_PER_DAY;
+
+    hour = t / SECS_PER_HOUR;
+    t = t % SECS_PER_HOUR;
+    min = t / SECS_PER_MIN;
+    sec = t % SECS_PER_MIN;
+
+    *date = EXFAT_DATE(year, month, day);
+    *time = EXFAT_TIME(hour, min, sec);
+}
 
 /*
  * Calculate checksum for directory entry set
@@ -41,32 +128,14 @@ exfat_checksum_direntry(struct exfat_direntry_set *es)
 }
 
 /*
- * Convert time_t to ExFAT timestamp
- */
-static uint32_t
-exfat_time_unix2exfat(time_t t)
-{
-    struct tm tm;
-
-    gmtime_r(&t, &tm);
-    return ((tm.tm_year - 80) << 25) |
-           ((tm.tm_mon + 1) << 21) |
-           (tm.tm_mday << 16) |
-           (tm.tm_hour << 11) |
-           (tm.tm_min << 5) |
-           (tm.tm_sec >> 1);
-}
-
-/*
  * Write directory entry set to directory
  */
-static int
+int
 exfat_write_direntry(struct vnode *dvp, struct exfat_direntry_set *es, off_t offset)
 {
     struct exfat_mount *emp = VTOVFSMP(dvp);
     struct buf *bp;
     uint32_t sector;
-    uint32_t sec_offset;
     uint8_t *entry;
     int error;
 
@@ -76,7 +145,7 @@ exfat_write_direntry(struct vnode *dvp, struct exfat_direntry_set *es, off_t off
              (offset >> EXFAT_SECTOR_BITS);
 
     /* Read sector */
-    error = bread(dvp->v_mount->mnt_dev, sector, EXFAT_SECTOR_SIZE, NOCRED, &bp);
+    error = bread(VTOVFSMP(dvp)->devvp, sector, EXFAT_SECTOR_SIZE, NOCRED, &bp);
     if (error) {
         brelse(bp);
         return error;
@@ -123,7 +192,7 @@ exfat_create_entry(struct vnode *dvp, const char *name, int namelen,
     es->file.type = EXFAT_ENTRY_FILE;
     es->file.secondary_count = 2; /* Stream entry + at least one name entry */
     es->file.file_attributes = attr;
-    es->file.create_timestamp = exfat_time_unix2exfat(ctime->tv_sec);
+    unix_time_to_exfat(ctime, &es->file.create_timestamp, &es->file.create_timestamp);
     es->file.last_modified_timestamp = es->file.create_timestamp;
     es->file.last_access_timestamp = es->file.create_timestamp;
 
@@ -200,7 +269,7 @@ exfat_remove_entry(struct vnode *dvp, struct exfat_direntry_set *es, off_t offse
              (offset >> EXFAT_SECTOR_BITS);
 
     /* Read sector */
-    error = bread(dvp->v_mount->mnt_dev, sector, EXFAT_SECTOR_SIZE, NOCRED, &bp);
+    error = bread(VTOVFSMP(dvp)->devvp, sector, EXFAT_SECTOR_SIZE, NOCRED, &bp);
     if (error) {
         brelse(bp);
         return error;

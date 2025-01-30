@@ -1,3 +1,20 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2024 The FreeBSD Foundation
+ *
+ * This software was developed by Paige A. Thompson (Ravenhammer Research.)
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ */
+ 
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/namei.h>
@@ -20,6 +37,9 @@ static vop_getattr_t    exfat_getattr;
 static vop_inactive_t   exfat_inactive;
 static vop_reclaim_t    exfat_reclaim;
 
+static int exfat_read_cluster(struct exfat_mount *emp, uint32_t cluster, char *buffer);
+static int exfat_write_cluster(struct exfat_mount *emp, uint32_t cluster, char *buffer);
+
 static int
 exfat_read_cluster(struct exfat_mount *emp, uint32_t cluster, char *buffer)
 {
@@ -30,7 +50,7 @@ exfat_read_cluster(struct exfat_mount *emp, uint32_t cluster, char *buffer)
     sector = emp->boot.cluster_heap_offset +
              ((cluster - 2) << emp->boot.sectors_per_cluster_shift);
 
-    error = bread(emp->mp->mnt_dev, sector, emp->bytes_per_cluster, NOCRED, &bp);
+    error = bread(emp->devvp, sector, emp->bytes_per_cluster, NOCRED, &bp);
     if (error) {
         brelse(bp);
         return error;
@@ -54,7 +74,7 @@ exfat_write_cluster(struct exfat_mount *emp, uint32_t cluster, char *buffer)
     sector = emp->boot.cluster_heap_offset +
              ((cluster - 2) << emp->boot.sectors_per_cluster_shift);
 
-    error = bread(emp->mp->mnt_dev, sector, emp->bytes_per_cluster, NOCRED, &bp);
+    error = bread(emp->devvp, sector, emp->bytes_per_cluster, NOCRED, &bp);
     if (error) {
         brelse(bp);
         return error;
@@ -135,11 +155,12 @@ exfat_read(struct vop_read_args *ap)
     /* Update access time */
     if (error == 0) {
         struct exfat_direntry_set es;
+        off_t dir_offset;
         /* Find and update the directory entry */
-        error = exfat_find_dirent(dvp, ep->cluster, &es, &offset);
+        error = exfat_find_dirent(vp, ep->cluster, &es, &dir_offset);
         if (error == 0) {
             exfat_update_timestamps(&es.file, EXFAT_UTIME_ACCESS);
-            error = exfat_write_direntry(dvp, &es, offset);
+            error = exfat_write_direntry(vp, &es, dir_offset);
         }
     }
 
@@ -166,19 +187,26 @@ exfat_getattr(struct vop_getattr_args *ap)
     vap->va_nlink = 1;
     vap->va_uid = 0;
     vap->va_gid = 0;
-    vap->va_fsid = dev2udev(emp->mp->mnt_dev);
+    vap->va_fsid = dev2udev(emp->devvp->v_rdev);
     vap->va_fileid = ep->cluster;
     vap->va_size = ep->finfo.file_size;
     vap->va_blocksize = emp->bytes_per_cluster;
-    vap->va_atime = ep->finfo.access_time;
-    vap->va_mtime = ep->finfo.modified_time;
-    vap->va_ctime = ep->finfo.create_time;
+    vap->va_atime = ep->access_time;
+    vap->va_mtime = ep->modify_time;
+    vap->va_ctime = ep->create_time;
     vap->va_gen = 1;
     vap->va_flags = 0;
     vap->va_rdev = 0;
     vap->va_bytes = ep->finfo.file_size;
     vap->va_filerev = 0;
     vap->va_vaflags = 0;
+
+    /* Remove from hash table */
+    mtx_lock(&exfat_node_hash_mtx);
+    LIST_REMOVE(ep, hash);
+    struct exfat_node_hash *hash = &exfat_node_hash[EXFAT_NODE_HASH(ep->cluster)];
+    hash->lh_count--;
+    mtx_unlock(&exfat_node_hash_mtx);
 
     return 0;
 }
@@ -208,8 +236,9 @@ exfat_reclaim(struct vop_reclaim_args *ap)
 
     /* Remove from hash table */
     mtx_lock(&exfat_node_hash_mtx);
-    LIST_REMOVE(ep, node);
-    exfat_node_hash[EXFAT_NODE_HASH(ep->cluster)].lh_count--;
+    LIST_REMOVE(ep, hash);
+    struct exfat_node_hash *hash = &exfat_node_hash[EXFAT_NODE_HASH(ep->cluster)];
+    hash->lh_count--;
     mtx_unlock(&exfat_node_hash_mtx);
 
     /* Free node */
@@ -232,7 +261,6 @@ exfat_readdir(struct vop_readdir_args *ap)
     struct exfat_direntry_set es;
     struct dirent dirent;
     int error;
-    off_t offset;
 
     /* Check if this is a directory */
     if (vp->v_type != VDIR)
@@ -244,9 +272,8 @@ exfat_readdir(struct vop_readdir_args *ap)
         return error;
 
     /* Skip to the requested offset */
-    offset = uio->uio_offset;
-    while (offset > 0 && (error = exfat_next_dirent(&ctx, &es)) == 0) {
-        offset--;
+    while (uio->uio_offset > 0 && (error = exfat_next_dirent(&ctx, &es)) == 0) {
+        uio->uio_offset--;
     }
     if (error && error != ENOENT) {
         exfat_scan_cleanup(&ctx);
@@ -483,7 +510,6 @@ exfat_remove(struct vop_remove_args *ap)
     struct exfat_node *ep = VTOE(vp);
     struct exfat_scan_ctx ctx;
     struct exfat_direntry_set es;
-    off_t offset = 0;
     int error;
 
     /* Find the directory entry */
@@ -502,7 +528,6 @@ exfat_remove(struct vop_remove_args *ap)
             exfat_scan_cleanup(&ctx);
             return error;
         }
-        offset = ctx.offset;
     }
 
     exfat_scan_cleanup(&ctx);
@@ -570,12 +595,10 @@ exfat_rename(struct vop_rename_args *ap)
     struct vnode *tdvp = ap->a_tdvp;    /* to directory vnode */
     struct vnode *tvp = ap->a_tvp;      /* to file/dir vnode (if exists) */
     struct componentname *tcnp = ap->a_tcnp;
-    struct exfat_mount *emp = VTOVFSMP(fdvp);
     struct exfat_node *fep = VTOE(fvp);
     struct exfat_scan_ctx ctx;
     struct exfat_direntry_set es, new_es;
     struct timespec ts;
-    off_t offset = 0;
     int error;
 
     /* Check for cross-device rename */
@@ -585,18 +608,9 @@ exfat_rename(struct vop_rename_args *ap)
     /* Get current time */
     vfs_timestamp(&ts);
 
-    /* If target exists, remove it first */
-    if (tvp) {
-        if (tvp->v_type == VDIR) {
-            error = exfat_rmdir(ap);
-            if (error)
-                return error;
-        } else {
-            error = exfat_remove(ap);
-            if (error)
-                return error;
-        }
-    }
+    /* If target exists, return error */
+    if (tvp)
+        return EEXIST;
 
     /* Find the source directory entry */
     error = exfat_scan_directory(fdvp, &ctx);
@@ -633,23 +647,34 @@ exfat_rename(struct vop_rename_args *ap)
             new_es.stream.valid_data_length = file_size;
 
             /* Update timestamps */
-            new_es.file.last_modified_timestamp = exfat_time_unix2exfat(ts.tv_sec);
+            unix_time_to_exfat(&ts, &new_es.file.last_modified_timestamp, &new_es.file.last_modified_timestamp);
             new_es.file.last_access_timestamp = new_es.file.last_modified_timestamp;
 
             exfat_scan_cleanup(&ctx);
             return 0;
         }
-        offset = ctx.offset;
     }
 
     exfat_scan_cleanup(&ctx);
     return ENOENT;
 }
 
+static int
+exfat_cachedlookup(struct vop_cachedlookup_args *ap)
+{
+    return exfat_lookup_node(ap->a_dvp, ap->a_cnp, ap->a_vpp);
+}
+
+static int
+exfat_access_wrapper(struct vop_access_args *ap)
+{
+    return exfat_access(ap->a_vp, ap->a_accmode, ap->a_cred, ap->a_td);
+}
+
 struct vop_vector exfat_vnodeops = {
     .vop_default    = &default_vnodeops,
     .vop_lookup     = VOP_PANIC,       /* Use vfs_cache_lookup */
-    .vop_cachedlookup = exfat_lookup_node,
+    .vop_cachedlookup = exfat_cachedlookup,
     .vop_create     = exfat_create,
     .vop_mkdir      = exfat_mkdir,
     .vop_remove     = exfat_remove,
@@ -661,5 +686,5 @@ struct vop_vector exfat_vnodeops = {
     .vop_inactive   = exfat_inactive,
     .vop_reclaim    = exfat_reclaim,
     .vop_rename     = exfat_rename,
-    .vop_access     = exfat_access,
+    .vop_access     = exfat_access_wrapper,
 }; 

@@ -3,7 +3,7 @@
  *
  * Copyright (c) 2024 The FreeBSD Foundation
  *
- * This software was developed by {Your Name or Organization}.
+ * This software was developed by Paige A. Thompson (Ravenhammer Research.)
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -13,18 +13,6 @@
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
- * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
- * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
- * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
- * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
- * SUCH DAMAGE.
  */
 
 #include <sys/param.h>
@@ -35,18 +23,19 @@
 #include <sys/module.h>
 #include <sys/mount.h>
 #include <sys/vnode.h>
+#include <sys/eventhandler.h>
 #include <sys/bio.h>
 #include <sys/buf.h>
 #include <sys/fcntl.h>
 #include <sys/malloc.h>
 
 #include "exfat.h"
+#include "exfat_node.h"
 
 static vfs_mount_t     exfat_mount;
 static vfs_unmount_t   exfat_unmount;
 static vfs_root_t      exfat_root;
 static vfs_statfs_t    exfat_statfs;
-static vfs_setlabel_t  exfat_setlabel;
 static vfs_sync_t      exfat_sync;
 
 static struct vfsops exfat_vfsops = {
@@ -54,7 +43,6 @@ static struct vfsops exfat_vfsops = {
     .vfs_unmount    = exfat_unmount,
     .vfs_root       = exfat_root,
     .vfs_statfs     = exfat_statfs,
-    .vfs_setlabel   = exfat_setlabel,
     .vfs_sync       = exfat_sync,
 };
 
@@ -77,7 +65,7 @@ exfat_read_fat_entry(struct exfat_mount *emp, uint32_t cluster, uint32_t *next)
     fat_offset = cluster * sizeof(uint32_t);
     sec_offset = fat_offset >> EXFAT_SECTOR_BITS;
 
-    error = bread(emp->mp->mnt_dev, 
+    error = bread(EXFAT_DEV(emp->mp),
                  emp->boot.fat_offset + sec_offset,
                  EXFAT_SECTOR_SIZE, NOCRED, &bp);
     if (error) {
@@ -124,7 +112,7 @@ exfat_mount(struct mount *mp)
     emp->mp = mp;
 
     /* Read boot sector */
-    error = bread(mp->mnt_dev, 0, EXFAT_SECTOR_SIZE, NOCRED, &bp);
+    error = bread(EXFAT_DEV(mp), 0, EXFAT_SECTOR_SIZE, NOCRED, &bp);
     if (error) {
         free(emp, M_EXFAT);
         return error;
@@ -278,25 +266,6 @@ exfat_statfs(struct mount *mp, struct statfs *sbp)
 }
 
 /*
- * Set volume label
- */
-static int
-exfat_setlabel(struct mount *mp, const char *label, struct thread *td)
-{
-    struct exfat_mount *emp = VFSTOEXFAT(mp);
-    size_t len;
-
-    /* Check for write access */
-    if (mp->mnt_flag & MNT_RDONLY)
-        return EROFS;
-
-    len = strlen(label);
-
-    /* Update volume label */
-    return exfat_write_volume_label(emp, label, len);
-}
-
-/*
  * Sync the filesystem
  */
 static int
@@ -312,16 +281,22 @@ exfat_sync(struct mount *mp, int waitfor)
 
     /* First flush all vnodes */
     if (waitfor == MNT_WAIT) {
-        MNT_VNODE_FOREACH_ALL(vp, mp, v) {
+        struct vnode *mvp;
+        vp = TAILQ_FIRST(&mp->mnt_nvnodelist);
+        while (vp != NULL) {
+            VI_LOCK(vp);
+            mvp = TAILQ_NEXT(vp, v_nmntvnodes);
+            VI_UNLOCK(vp);
             error = VOP_FSYNC(vp, MNT_WAIT, curthread);
             if (error)
                 allerror = error;
             vrele(vp);
+            vp = mvp;
         }
     }
 
     /* Then sync memory-mapped files */
-    error = vfs_msync(mp, MNT_WAIT, curthread);
+    error = vfs_stdsync(mp, MNT_WAIT);
     if (error)
         allerror = error;
 
@@ -333,19 +308,24 @@ exfat_sync(struct mount *mp, int waitfor)
     return allerror;
 }
 
-/* Module load/unload handlers */
 static int
-exfat_init(struct vfsconf *vfsp)
+exfat_modevent(module_t mod, int type, void *data)
 {
-    exfat_node_init();
-    return 0;
-}
+    int error = 0;
 
-static int
-exfat_uninit(struct vfsconf *vfsp)
-{
-    exfat_node_uninit();
-    return 0;
+    switch (type) {
+    case MOD_LOAD:
+        exfat_node_init();
+        break;
+    case MOD_UNLOAD:
+        exfat_node_uninit();
+        break;
+    default:
+        error = EOPNOTSUPP;
+        break;
+    }
+
+    return error;
 }
 
 static struct vfsconf exfat_vfsconf = {
@@ -353,8 +333,6 @@ static struct vfsconf exfat_vfsconf = {
     .vfc_vfsops = &exfat_vfsops,
     .vfc_typenum = -1,
     .vfc_flags = VFCF_READONLY,
-    .vfc_init = exfat_init,
-    .vfc_uninit = exfat_uninit,
 };
 
 DECLARE_MODULE(exfat, exfat_vfsconf, SI_SUB_VFS, SI_ORDER_MIDDLE);

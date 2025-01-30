@@ -1,3 +1,20 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2024 The FreeBSD Foundation
+ *
+ * This software was developed by Paige A. Thompson (Ravenhammer Research.)
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ */
+ 
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
@@ -13,8 +30,8 @@
 #include "exfat.h"
 #include "exfat_node.h"
 
-static struct exfat_node_hash exfat_node_hash[EXFAT_NODES_HASH_SIZE];
-static struct mtx exfat_node_hash_mtx;
+struct exfat_node_hash exfat_node_hash[EXFAT_NODES_HASH_SIZE];
+struct mtx exfat_node_hash_mtx;
 
 /*
  * Initialize the node hash table
@@ -44,7 +61,7 @@ exfat_node_uninit(void)
  * Get a node from hash table or create new one
  */
 int
-exfat_get_node(struct mount *mp, uint32_t cluster, enum vtype type, struct vnode **vpp)
+exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
 {
     struct exfat_mount *emp = VFSTOEXFAT(mp);
     struct exfat_node *ep;
@@ -53,12 +70,12 @@ exfat_get_node(struct mount *mp, uint32_t cluster, enum vtype type, struct vnode
 
     /* Check hash table first */
     mtx_lock(&exfat_node_hash_mtx);
-    LIST_FOREACH(ep, &exfat_node_hash[EXFAT_NODE_HASH(cluster)].lh_list, node) {
+    LIST_FOREACH(ep, &exfat_node_hash[EXFAT_NODE_HASH(cluster)].lh_list, hash) {
         if (ep->cluster == cluster && ETOV(ep)->v_mount == mp) {
             vp = ETOV(ep);
             VI_LOCK(vp);
             mtx_unlock(&exfat_node_hash_mtx);
-            error = vget(vp, LK_EXCLUSIVE | LK_RETRY, curthread);
+            error = vget(vp, LK_EXCLUSIVE | LK_RETRY);
             if (error)
                 return error;
             *vpp = vp;
@@ -74,7 +91,7 @@ exfat_get_node(struct mount *mp, uint32_t cluster, enum vtype type, struct vnode
 
     ep = malloc(sizeof(*ep), M_EXFAT, M_WAITOK | M_ZERO);
     ep->cluster = cluster;
-    ep->vp = vp;
+    ep->vnode = vp;
     vp->v_data = ep;
     vp->v_type = type;
 
@@ -88,7 +105,7 @@ exfat_get_node(struct mount *mp, uint32_t cluster, enum vtype type, struct vnode
 
     /* Add to hash table */
     mtx_lock(&exfat_node_hash_mtx);
-    LIST_INSERT_HEAD(&exfat_node_hash[EXFAT_NODE_HASH(cluster)].lh_list, ep, node);
+    LIST_INSERT_HEAD(&exfat_node_hash[EXFAT_NODE_HASH(cluster)].lh_list, ep, hash);
     exfat_node_hash[EXFAT_NODE_HASH(cluster)].lh_count++;
     mtx_unlock(&exfat_node_hash_mtx);
 
@@ -113,7 +130,7 @@ exfat_read_node_info(struct exfat_mount *emp, struct exfat_node *ep)
              ((ep->cluster - 2) << emp->boot.sectors_per_cluster_shift);
 
     /* Read sector containing directory entry */
-    error = bread(emp->mp->mnt_dev, sector, EXFAT_SECTOR_SIZE, NOCRED, &bp);
+    error = bread(emp->devvp, sector, EXFAT_SECTOR_SIZE, NOCRED, &bp);
     if (error) {
         brelse(bp);
         return error;

@@ -3,7 +3,7 @@
  *
  * Copyright (c) 2024 The FreeBSD Foundation
  *
- * This software was developed by {Your Name or Organization}.
+ * This software was developed by Paige A. Thompson (Ravenhammer Research.)
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -13,20 +13,8 @@
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
- * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
- * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
- * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
- * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
- * SUCH DAMAGE.
  */
-
+ 
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
@@ -43,13 +31,13 @@
 static int
 exfat_getextattr(struct vop_getextattr_args *ap)
 {
-    struct vnode *vp = ap->a_vp;
-    int attrnamespace = ap->a_attrnamespace;
-    const char *name = ap->a_name;
-    struct uio *uio = ap->a_uio;
-    size_t *size = ap->a_size;
-    struct ucred *cred = ap->a_cred;
-    struct thread *td = ap->a_td;
+    (void)ap->a_vp;
+    (void)ap->a_attrnamespace;
+    (void)ap->a_name;
+    (void)ap->a_uio;
+    (void)ap->a_size;
+    (void)ap->a_cred;
+    (void)ap->a_td;
 
     /* We don't support extended attributes yet */
     return EOPNOTSUPP;
@@ -61,12 +49,12 @@ exfat_getextattr(struct vop_getextattr_args *ap)
 static int
 exfat_setextattr(struct vop_setextattr_args *ap)
 {
-    struct vnode *vp = ap->a_vp;
-    int attrnamespace = ap->a_attrnamespace;
-    const char *name = ap->a_name;
-    struct uio *uio = ap->a_uio;
-    struct ucred *cred = ap->a_cred;
-    struct thread *td = ap->a_td;
+    (void)ap->a_vp;
+    (void)ap->a_attrnamespace;
+    (void)ap->a_name;
+    (void)ap->a_uio;
+    (void)ap->a_cred;
+    (void)ap->a_td;
 
     /* We don't support extended attributes yet */
     return EOPNOTSUPP;
@@ -78,15 +66,13 @@ exfat_setextattr(struct vop_setextattr_args *ap)
 static int
 exfat_listextattr(struct vop_listextattr_args *ap)
 {
-    struct vnode *vp = ap->a_vp;
-    int attrnamespace = ap->a_attrnamespace;
-    struct uio *uio = ap->a_uio;
-    size_t *size = ap->a_size;
-    struct ucred *cred = ap->a_cred;
-    struct thread *td = ap->a_td;
+    (void)ap->a_vp;
+    (void)ap->a_attrnamespace;
+    (void)ap->a_uio;
+    (void)ap->a_size;
+    (void)ap->a_cred;
+    (void)ap->a_td;
 
     /* We don't support extended attributes yet */
-    if (size)
-        *size = 0;
-    return 0;
+    return EOPNOTSUPP;
 } 

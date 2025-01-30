@@ -1,3 +1,20 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2024 The FreeBSD Foundation
+ *
+ * This software was developed by Paige A. Thompson (Ravenhammer Research.)
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ */
+ 
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
@@ -13,18 +30,22 @@ void
 exfat_timestamp_to_timespec(uint32_t timestamp, uint8_t time_ms,
                           uint8_t tz_offset, struct timespec *ts)
 {
-    struct tm tm;
+    int year, month, day, hour, min, sec;
     int32_t tzoffset;
 
-    tm.tm_year = ((timestamp >> 25) & 0x7F) + 80;
-    tm.tm_mon  = ((timestamp >> 21) & 0x0F) - 1;
-    tm.tm_mday = ((timestamp >> 16) & 0x1F);
-    tm.tm_hour = ((timestamp >> 11) & 0x1F);
-    tm.tm_min  = ((timestamp >>  5) & 0x3F);
-    tm.tm_sec  = ((timestamp & 0x1F) << 1);
+    year  = ((timestamp >> 25) & 0x7F) + 1980;
+    month = ((timestamp >> 21) & 0x0F);
+    day   = ((timestamp >> 16) & 0x1F);
+    hour  = ((timestamp >> 11) & 0x1F);
+    min   = ((timestamp >>  5) & 0x3F);
+    sec   = ((timestamp & 0x1F) << 1);
 
-    /* Convert to Unix timestamp */
-    ts->tv_sec = timegm(&tm);
+    ts->tv_sec = (year - 1970) * 31536000 +  /* Seconds in a year */
+                 month * 2592000 +           /* Seconds in a month (approx) */
+                 day * 86400 +               /* Seconds in a day */
+                 hour * 3600 +               /* Seconds in an hour */
+                 min * 60 +                  /* Seconds in a minute */
+                 sec;                        /* Seconds */
 
     /* Add milliseconds */
     ts->tv_nsec = time_ms * 10000000;
@@ -44,17 +65,27 @@ exfat_timespec_to_timestamp(const struct timespec *ts,
                           uint32_t *timestamp, uint8_t *time_ms,
                           uint8_t *tz_offset)
 {
-    struct tm tm;
     time_t t = ts->tv_sec;
+    int year, month, day, hour, min, sec;
 
-    gmtime_r(&t, &tm);
+    /* Convert seconds since epoch to date/time */
+    year = 1970 + (t / 31536000);
+    t %= 31536000;
+    month = t / 2592000;
+    t %= 2592000;
+    day = t / 86400;
+    t %= 86400;
+    hour = t / 3600;
+    t %= 3600;
+    min = t / 60;
+    sec = t % 60;
 
-    *timestamp = ((tm.tm_year - 80) << 25) |
-                ((tm.tm_mon + 1)    << 21) |
-                (tm.tm_mday         << 16) |
-                (tm.tm_hour         << 11) |
-                (tm.tm_min          <<  5) |
-                (tm.tm_sec          >>  1);
+    *timestamp = ((year - 1980) << 25) |
+                (month << 21) |
+                (day   << 16) |
+                (hour  << 11) |
+                (min   <<  5) |
+                (sec   >>  1);
 
     /* Convert nanoseconds to 10ms units (0-199) */
     *time_ms = ts->tv_nsec / 10000000;

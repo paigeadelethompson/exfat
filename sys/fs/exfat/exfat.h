@@ -3,7 +3,7 @@
  *
  * Copyright (c) 2024 The FreeBSD Foundation
  *
- * This software was developed by {Your Name or Organization}.
+ * This software was developed by Paige A. Thompson (Ravenhammer Research.)
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -13,18 +13,6 @@
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
- * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
- * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
- * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
- * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
- * SUCH DAMAGE.
  */
 
 #ifndef _FS_EXFAT_H_
@@ -35,6 +23,13 @@
 #include <sys/module.h>
 #include <sys/mount.h>
 #include <sys/vnode.h>
+#include <sys/time.h>   /* For struct timespec */
+
+/* Forward declarations */
+struct exfat_node;
+struct vnode;
+struct mount;
+enum vtype;  /* Forward declaration of vtype enum */
 
 /* ExFAT specific constants */
 #define EXFAT_IOC_MAGIC       'E'
@@ -69,6 +64,7 @@ struct exfat_boot_record {
 /* Mount structure for ExFAT */
 struct exfat_mount {
     struct mount *mp;
+    struct vnode *devvp;      /* Device vnode */
     struct exfat_boot_record boot;
     uint32_t clusters_per_fat;
     uint32_t bytes_per_cluster;
@@ -141,6 +137,47 @@ struct exfat_entry_name {
     uint16_t name[15];           /* UTF-16 characters */
 } __packed;
 
+struct exfat_entry_bitmap {
+    uint8_t  type;               /* 0x81 */
+    uint8_t  flags;
+    uint8_t  reserved[18];
+    uint32_t first_cluster;
+    uint64_t data_length;
+} __packed;
+
+struct exfat_entry_upcase {
+    uint8_t  type;               /* 0x82 */
+    uint8_t  reserved1[3];
+    uint32_t checksum;
+    uint8_t  reserved2[12];
+    uint32_t first_cluster;
+    uint64_t data_length;
+} __packed;
+
+struct exfat_entry_label {
+    uint8_t  type;               /* 0x83 */
+    uint8_t  character_count;
+    uint16_t unicode_label[11];
+    uint8_t  reserved[8];
+} __packed;
+
+/* Directory entry set structure */
+struct exfat_direntry_set {
+    struct exfat_entry_file file;
+    struct exfat_entry_stream stream;
+    struct exfat_entry_name name[17];  /* Maximum name entries */
+    uint8_t name_count;
+};
+
+/* Directory scanning context */
+struct exfat_scan_ctx {
+    struct exfat_mount *emp;
+    uint32_t cluster;           /* Current cluster */
+    uint32_t offset;           /* Offset within cluster */
+    struct buf *bp;            /* Current buffer */
+    uint8_t *entry;            /* Current entry pointer */
+};
+
 /* In-memory file info structure */
 struct exfat_file_info {
     uint32_t first_cluster;
@@ -162,11 +199,20 @@ void exfat_cluster_free(struct exfat_mount *emp, uint32_t cluster);
 #define VFSTOEXFAT(mp)   ((struct exfat_mount *)((mp)->mnt_data))
 #define VTOVFS(vp)       ((vp)->v_mount)
 #define VTOVFSMP(vp)     ((struct exfat_mount *)((vp)->v_mount->mnt_data))
+#define VTOE(vp)   ((struct exfat_node *)(vp)->v_data)
+#define ETOV(ep)   ((ep)->vnode)
 
 /* Additional function prototypes */
-int exfat_get_node(struct mount *mp, uint32_t cluster, enum vtype type, struct vnode **vpp);
+int exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp);
 int exfat_read_directory(struct vnode *vp, struct uio *uio, int *eofflag);
 int exfat_lookup_node(struct vnode *dvp, struct componentname *cnp, struct vnode **vpp);
+int exfat_create_entry(struct vnode *dvp, const char *name, int namelen,
+                      uint16_t attr, struct timespec *ctime,
+                      struct exfat_direntry_set *es);
+int exfat_scan_directory(struct vnode *vp, struct exfat_scan_ctx *ctx);
+int exfat_next_dirent(struct exfat_scan_ctx *ctx, struct exfat_direntry_set *es);
+void exfat_scan_cleanup(struct exfat_scan_ctx *ctx);
+int exfat_remove_entry(struct vnode *dvp, struct exfat_direntry_set *es, off_t offset);
 
 /* VFS operations */
 extern struct vop_vector exfat_vnodeops;
@@ -195,6 +241,11 @@ static const uint8_t exfat_invalid_chars[] = {
 #define EXFAT_VOL_DIRTY        0x0001  /* Volume is dirty */
 #define EXFAT_VOL_ACTIVE_FAT   0x0002  /* Second FAT is active */
 
+/* Timestamp update flags */
+#define EXFAT_UTIME_ACCESS    0x01
+#define EXFAT_UTIME_MODIFY    0x02
+#define EXFAT_UTIME_CREATE    0x04
+
 /* Volume serial number generation */
 #define EXFAT_SERIAL_DATE_MASK  0xFFFF0000
 #define EXFAT_SERIAL_TIME_MASK  0x0000FFFF
@@ -219,5 +270,49 @@ struct exfat_timespec {
     uint8_t  time_ms;      /* Milliseconds (0-199) */
     uint8_t  tz_offset;    /* Timezone offset in 15-minute increments */
 };
+
+/* Function prototypes */
+int exfat_find_dirent(struct vnode *vp, uint32_t cluster, struct exfat_direntry_set *es, off_t *offset);
+void exfat_update_timestamps(struct exfat_entry_file *file, int flags);
+int exfat_write_direntry(struct vnode *vp, struct exfat_direntry_set *es, off_t offset);
+
+/* UTF conversion functions */
+int exfat_utf16_to_utf8(const uint16_t *src, size_t srclen,
+                        char *dst, size_t dstlen, size_t *outlen);
+int exfat_utf8_to_utf16(const char *src, uint16_t *dst,
+                        size_t dstlen, size_t *outlen);
+
+/* Error codes */
+#define EXFAT_ERROR_NONE        0
+#define EXFAT_ERROR_IO          EIO
+#define EXFAT_ERROR_NOMEM       ENOMEM
+#define EXFAT_ERROR_NOTFOUND    ENOENT
+#define EXFAT_ERROR_EXISTS      EEXIST
+#define EXFAT_ERROR_NOSPC       ENOSPC
+#define EXFAT_ERROR_INVAL       EINVAL
+
+/* vnode types */
+#define EXFAT_VREG    1    /* regular file */
+#define EXFAT_VDIR    2    /* directory */
+
+/* Memory allocation type */
+MALLOC_DECLARE(M_EXFAT);
+
+/* Volume operations */
+int exfat_init_bitmap(struct exfat_mount *emp);
+int exfat_init_upcase(struct exfat_mount *emp);
+void exfat_cleanup_upcase(struct exfat_mount *emp);
+int exfat_read_volume_label(struct exfat_mount *emp);
+int exfat_write_volume_label(struct exfat_mount *emp, const char *label, size_t len);
+int exfat_validate_label(const char *label, size_t len);
+int exfat_update_percent_in_use(struct exfat_mount *emp);
+int exfat_set_volume_dirty(struct exfat_mount *emp, int dirty);
+
+/* Device access macro */
+#define EXFAT_DEV(mp)    (VFSTOEXFAT(mp)->devvp)
+
+/* Time conversion functions */
+void unix_time_to_exfat(const struct timespec *ts, uint32_t *date, uint32_t *time);
+void exfat_time_to_unix(uint32_t date, uint32_t time, struct timespec *ts);
 
 #endif /* _FS_EXFAT_H_ */ 
