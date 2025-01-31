@@ -101,6 +101,41 @@ read_fat_sector(struct fsck_exfat_ctx *ctx, off_t sector, uint32_t *buffer)
     return 0;
 }
 
+static int
+write_fat_sector(struct fsck_exfat_ctx *ctx, off_t sector, uint32_t *buffer)
+{
+    off_t offset = (ctx->emp->boot.fat_offset + sector) * EXFAT_SECTOR_SIZE;
+    ssize_t bytes;
+
+    if (lseek(ctx->fd, offset, SEEK_SET) != offset) {
+        report_error(ctx, FSCK_ERR_FATAL, "seek error: %s", strerror(errno));
+        return -1;
+    }
+
+    bytes = write(ctx->fd, buffer, EXFAT_SECTOR_SIZE);
+    if (bytes != EXFAT_SECTOR_SIZE) {
+        report_error(ctx, FSCK_ERR_FATAL, "write error: %s", strerror(errno));
+        return -1;
+    }
+
+    /* If we have a second FAT, update it too */
+    if (ctx->emp->boot.number_of_fats == 2) {
+        offset += ctx->emp->boot.fat_length * EXFAT_SECTOR_SIZE;
+        if (lseek(ctx->fd, offset, SEEK_SET) != offset) {
+            report_error(ctx, FSCK_ERR_FATAL, "seek error: %s", strerror(errno));
+            return -1;
+        }
+
+        bytes = write(ctx->fd, buffer, EXFAT_SECTOR_SIZE);
+        if (bytes != EXFAT_SECTOR_SIZE) {
+            report_error(ctx, FSCK_ERR_FATAL, "write error: %s", strerror(errno));
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
 int
 check_boot_sector(struct fsck_exfat_ctx *ctx)
 {
