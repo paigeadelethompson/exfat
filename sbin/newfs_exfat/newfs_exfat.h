@@ -21,26 +21,6 @@
 #include <sys/types.h>
 #include <sys/param.h>
 
-/* Format context structure */
-struct newfs_exfat_ctx {
-    const char *device;          /* Device name */
-    int fd;                      /* Device file descriptor */
-    uint64_t total_sectors;      /* Total sectors on device */
-    uint32_t bytes_per_sector;   /* Bytes per sector (usually 512) */
-    uint32_t sectors_per_cluster; /* Sectors per cluster */
-    uint32_t cluster_count;      /* Number of clusters */
-    uint32_t fat_sectors;        /* Sectors per FAT */
-    uint8_t number_of_fats;      /* Number of FATs (1 or 2) */
-    int verbose;                 /* Verbose output */
-};
-
-/* Function prototypes */
-int write_boot_sector(struct newfs_exfat_ctx *ctx);
-int write_fat(struct newfs_exfat_ctx *ctx);
-int write_root_dir(struct newfs_exfat_ctx *ctx);
-int write_bitmap(struct newfs_exfat_ctx *ctx);
-int write_upcase_table(struct newfs_exfat_ctx *ctx);
-
 /* ExFAT filesystem constants */
 #define EXFAT_SECTOR_SIZE          512
 #define EXFAT_SECTOR_BITS          9
@@ -55,29 +35,6 @@ int write_upcase_table(struct newfs_exfat_ctx *ctx);
 /* ExFAT volume flags */
 #define EXFAT_VOL_DIRTY           0x0001
 #define EXFAT_VOL_ACTIVE_FAT      0x0002
-
-/* Default formatting parameters */
-#define EXFAT_DEFAULT_CLUSTER_SIZE   32768    /* 32KB */
-#define EXFAT_MIN_CLUSTER_SIZE       4096     /* 4KB */
-#define EXFAT_MAX_CLUSTER_SIZE       32*1024*1024  /* 32MB */
-#define EXFAT_DEFAULT_FATS           1        /* Number of FATs */
-#define EXFAT_DEFAULT_ROOTDIR_SIZE   65536    /* Root dir size */
-
-/* Formatting limits */
-#define EXFAT_MIN_VOLUME_SIZE    (64*1024*1024)   /* 64MB minimum */
-#define EXFAT_MAX_VOLUME_SIZE    (128LL*1024*1024*1024*1024)  /* 128TB max */
-#define EXFAT_MAX_CLUSTERS       0xFFFFFFF5  /* Maximum valid cluster number */
-
-/* Default values */
-#define EXFAT_DEFAULT_REVISION   0x0100  /* Version 1.00 */
-#define EXFAT_DEFAULT_DRIVE      0x80    /* First drive */
-
-/* Validation macros */
-#define EXFAT_IS_POWER2(n)      (((n) & ((n) - 1)) == 0)
-#define EXFAT_VALID_CLUSTERSIZE(n) \
-    (EXFAT_IS_POWER2(n) && \
-     (n) >= EXFAT_MIN_CLUSTER_SIZE && \
-     (n) <= EXFAT_MAX_CLUSTER_SIZE)
 
 /* ExFAT filesystem parameters */
 struct exfat_boot_record {
@@ -103,5 +60,53 @@ struct exfat_boot_record {
     uint8_t  boot_code[EXFAT_BOOT_CODE_SIZE];  /* Boot code */
     uint16_t boot_signature;       /* Boot signature */
 };
+
+/* Format context structure */
+struct mkfs_exfat_ctx {
+    const char *device;          /* Device name */
+    int fd;                      /* Device file descriptor */
+    off_t dev_size;             /* Device size in bytes */
+    uint32_t cluster_size;      /* Cluster size in bytes */
+    struct exfat_boot_record boot;  /* Boot sector */
+    uint32_t cluster_heap_offset; /* Offset to cluster heap */
+    uint32_t cluster_count;     /* Total number of clusters */
+    uint32_t bitmap_cluster;    /* First cluster of bitmap */
+    uint32_t upcase_cluster;    /* First cluster of upcase table */
+    uint32_t root_cluster;      /* First cluster of root directory */
+    uint32_t first_cluster;     /* First available cluster */
+    uint32_t volume_serial;     /* Volume serial number */
+    const char *volume_label;   /* Volume label */
+    int verbose;                /* Verbose output */
+};
+
+/* Function prototypes */
+int write_boot_sector(struct mkfs_exfat_ctx *ctx);
+int write_fat(struct mkfs_exfat_ctx *ctx);
+int write_root_dir(struct mkfs_exfat_ctx *ctx);
+int write_bitmap(struct mkfs_exfat_ctx *ctx);
+int write_upcase_table(struct mkfs_exfat_ctx *ctx);
+
+/* Default formatting parameters */
+#define EXFAT_DEFAULT_CLUSTER_SIZE   32768    /* 32KB */
+#define EXFAT_MIN_CLUSTER_SIZE       4096     /* 4KB */
+#define EXFAT_MAX_CLUSTER_SIZE       32*1024*1024  /* 32MB */
+#define EXFAT_DEFAULT_FATS           1        /* Number of FATs */
+#define EXFAT_DEFAULT_ROOTDIR_SIZE   65536    /* Root dir size */
+
+/* Formatting limits */
+#define EXFAT_MIN_VOLUME_SIZE    (64*1024*1024)   /* 64MB minimum */
+#define EXFAT_MAX_VOLUME_SIZE    (128LL*1024*1024*1024*1024)  /* 128TB max */
+#define EXFAT_MAX_CLUSTERS       0xFFFFFFF5  /* Maximum valid cluster number */
+
+/* Default values */
+#define EXFAT_DEFAULT_REVISION   0x0100  /* Version 1.00 */
+#define EXFAT_DEFAULT_DRIVE      0x80    /* First drive */
+
+/* Validation macros */
+#define EXFAT_IS_POWER2(n)      (((n) & ((n) - 1)) == 0)
+#define EXFAT_VALID_CLUSTERSIZE(n) \
+    (EXFAT_IS_POWER2(n) && \
+     (n) >= EXFAT_MIN_CLUSTER_SIZE && \
+     (n) <= EXFAT_MAX_CLUSTER_SIZE)
 
 #endif /* _MKFS_EXFAT_H_ */ 
