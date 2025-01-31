@@ -1096,37 +1096,44 @@ create_lost_file(struct fsck_exfat_ctx *ctx, uint32_t cluster)
 static int
 check_upcase_table(struct fsck_exfat_ctx *ctx)
 {
-    struct buf *bp;
+    uint8_t *buffer;
     uint32_t sector;
     uint32_t checksum = 0;
     uint32_t size;
     uint32_t cluster;
     int error;
 
+    /* Allocate buffer */
+    buffer = malloc(EXFAT_SECTOR_SIZE);
+    if (buffer == NULL) {
+        report_error(ctx, FSCK_ERR_FATAL, "Cannot allocate buffer");
+        return -1;
+    }
+
     /* Read first sector of root directory to find upcase table entry */
     sector = ctx->emp->boot.cluster_heap_offset +
              ((ctx->emp->boot.root_dir_cluster - 2) << ctx->emp->boot.sectors_per_cluster_shift);
 
-    error = bread(ctx->fd, sector, EXFAT_SECTOR_SIZE, &bp);
+    error = read_sector(ctx, sector, buffer);
     if (error) {
-        report_error(ctx, FSCK_ERR_FATAL, "Cannot read root directory");
-        return -1;
+        free(buffer);
+        return error;
     }
 
     /* Find upcase table entry */
-    struct exfat_entry_upcase *upcase = (struct exfat_entry_upcase *)bp->b_data;
+    struct exfat_entry_upcase *upcase = (struct exfat_entry_upcase *)buffer;
     while (upcase->type != EXFAT_ENTRY_UPCASE && upcase->type != EXFAT_ENTRY_EOD) {
         upcase++;
-        if ((uint8_t *)upcase >= (uint8_t *)bp->b_data + EXFAT_SECTOR_SIZE) {
+        if ((uint8_t *)upcase >= buffer + EXFAT_SECTOR_SIZE) {
             report_error(ctx, FSCK_ERR_SERIOUS, "No upcase table found");
-            brelse(bp);
+            free(buffer);
             return -1;
         }
     }
 
     if (upcase->type == EXFAT_ENTRY_EOD) {
         report_error(ctx, FSCK_ERR_SERIOUS, "No upcase table found");
-        brelse(bp);
+        free(buffer);
         return -1;
     }
 
@@ -1135,7 +1142,7 @@ check_upcase_table(struct fsck_exfat_ctx *ctx)
     size = le64toh(upcase->data_length);
     uint32_t stored_checksum = le32toh(upcase->checksum);
 
-    brelse(bp);
+    free(buffer);
 
     /* Verify cluster chain */
     error = check_cluster_chain(ctx, cluster, size);
@@ -1145,10 +1152,7 @@ check_upcase_table(struct fsck_exfat_ctx *ctx)
     /* Calculate checksum */
     uint32_t remaining = size;
     while (remaining > 0) {
-        error = bread(ctx->fd, 
-                     ctx->emp->boot.cluster_heap_offset + 
-                     ((cluster - 2) << ctx->emp->boot.sectors_per_cluster_shift),
-                     EXFAT_SECTOR_SIZE, &bp);
+        error = read_cluster(ctx, cluster, buffer);
         if (error) {
             report_error(ctx, FSCK_ERR_FATAL, "Cannot read upcase table");
             return -1;
@@ -1157,9 +1161,8 @@ check_upcase_table(struct fsck_exfat_ctx *ctx)
         /* Update checksum */
         uint32_t bytes = MIN(remaining, EXFAT_SECTOR_SIZE);
         for (uint32_t i = 0; i < bytes; i++)
-            checksum = ((checksum << 31) | (checksum >> 1)) + ((uint8_t *)bp->b_data)[i];
+            checksum = ((checksum << 31) | (checksum >> 1)) + buffer[i];
 
-        brelse(bp);
         remaining -= bytes;
         
         if (remaining > 0) {
