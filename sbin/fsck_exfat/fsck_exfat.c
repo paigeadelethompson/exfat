@@ -511,7 +511,7 @@ check_direntry_set(struct fsck_exfat_ctx *ctx, struct exfat_direntry_set *es)
     return 0;
 }
 
-static int
+int
 check_cluster_chain(struct fsck_exfat_ctx *ctx, uint32_t start_cluster, uint64_t expected_size)
 {
     uint32_t cluster = start_cluster;
@@ -998,7 +998,7 @@ out:
     return error;
 }
 
-static int
+int
 create_lost_found_dir(struct fsck_exfat_ctx *ctx)
 {
     struct exfat_direntry_set es;
@@ -1050,7 +1050,7 @@ create_lost_found_dir(struct fsck_exfat_ctx *ctx)
     return error;
 }
 
-static int
+int
 create_lost_file(struct fsck_exfat_ctx *ctx, uint32_t cluster)
 {
     struct exfat_direntry_set es;
@@ -1093,7 +1093,7 @@ create_lost_file(struct fsck_exfat_ctx *ctx, uint32_t cluster)
     return write_direntry(ctx, ctx->lost_found_cluster, &es);
 }
 
-static int
+int
 check_upcase_table(struct fsck_exfat_ctx *ctx)
 {
     uint8_t *buffer;
@@ -1185,6 +1185,279 @@ check_upcase_table(struct fsck_exfat_ctx *ctx)
         return -1;
     }
 
+    return 0;
+}
+
+/* Calculate hash for filename */
+uint16_t
+exfat_calc_name_hash(struct exfat_mount *emp, const uint16_t *name, size_t len)
+{
+    uint16_t hash = 0;
+    size_t i;
+
+    for (i = 0; i < len; i++) {
+        uint16_t c = le16toh(name[i]);
+        /* Use upcase table if available */
+        if (emp->upcase)
+            c = le16toh(emp->upcase[c]);
+        hash = ((hash << 15) | (hash >> 1)) + c;
+    }
+
+    return hash;
+}
+
+/* Calculate checksum for directory entry set */
+uint16_t
+exfat_checksum_direntry(struct exfat_direntry_set *es)
+{
+    uint16_t checksum = 0;
+    uint8_t *entry = (uint8_t *)es;
+    size_t len = sizeof(struct exfat_entry_file) - 2; /* Skip checksum field */
+    size_t i;
+
+    /* Calculate checksum for file entry */
+    for (i = 0; i < len; i++)
+        checksum = ((checksum << 15) | (checksum >> 1)) + entry[i];
+
+    /* Add stream entry */
+    entry = (uint8_t *)&es->stream;
+    len = sizeof(struct exfat_entry_stream);
+    for (i = 0; i < len; i++)
+        checksum = ((checksum << 15) | (checksum >> 1)) + entry[i];
+
+    /* Add name entries */
+    for (i = 0; i < es->name_count; i++) {
+        entry = (uint8_t *)&es->name[i];
+        len = sizeof(struct exfat_entry_name);
+        for (size_t j = 0; j < len; j++)
+            checksum = ((checksum << 15) | (checksum >> 1)) + entry[j];
+    }
+
+    return checksum;
+}
+
+/* Write a cluster to disk */
+int
+write_cluster(struct fsck_exfat_ctx *ctx, uint32_t cluster, const void *buffer)
+{
+    off_t offset;
+    size_t bytes_per_cluster;
+    ssize_t bytes;
+
+    /* Calculate cluster offset */
+    offset = ((off_t)ctx->emp->boot.cluster_heap_offset +
+             ((off_t)cluster - 2) * (1 << ctx->emp->boot.sectors_per_cluster_shift)) *
+             EXFAT_SECTOR_SIZE;
+
+    /* Calculate cluster size */
+    bytes_per_cluster = EXFAT_SECTOR_SIZE << ctx->emp->boot.sectors_per_cluster_shift;
+
+    if (lseek(ctx->fd, offset, SEEK_SET) != offset) {
+        report_error(ctx, FSCK_ERR_FATAL, "seek error: %s", strerror(errno));
+        return -1;
+    }
+
+    bytes = write(ctx->fd, buffer, bytes_per_cluster);
+    if (bytes != bytes_per_cluster) {
+        report_error(ctx, FSCK_ERR_FATAL, "write error: %s", strerror(errno));
+        return -1;
+    }
+
+    return 0;
+}
+
+/* Write directory entry set to directory cluster */
+int
+write_direntry(struct fsck_exfat_ctx *ctx, uint32_t dir_cluster, struct exfat_direntry_set *es)
+{
+    char *buffer;
+    size_t bytes_per_cluster;
+    size_t entry_size;
+    int error;
+
+    /* Calculate sizes */
+    bytes_per_cluster = EXFAT_SECTOR_SIZE << ctx->emp->boot.sectors_per_cluster_shift;
+    entry_size = sizeof(struct exfat_entry_file) +
+                sizeof(struct exfat_entry_stream) +
+                es->name_count * sizeof(struct exfat_entry_name);
+
+    /* Allocate cluster buffer */
+    buffer = malloc(bytes_per_cluster);
+    if (buffer == NULL) {
+        report_error(ctx, FSCK_ERR_FATAL, "Cannot allocate cluster buffer");
+        return -1;
+    }
+
+    /* Read directory cluster */
+    error = read_cluster(ctx, dir_cluster, buffer);
+    if (error) {
+        free(buffer);
+        return error;
+    }
+
+    /* Find free space in directory */
+    uint8_t *entry = (uint8_t *)buffer;
+    while (entry < (uint8_t *)buffer + bytes_per_cluster) {
+        if (*entry == EXFAT_ENTRY_EOD || *entry == EXFAT_ENTRY_DELETED) {
+            /* Found space - write entries */
+            memcpy(entry, &es->file, sizeof(es->file));
+            entry += sizeof(es->file);
+            memcpy(entry, &es->stream, sizeof(es->stream));
+            entry += sizeof(es->stream);
+            for (int i = 0; i < es->name_count; i++) {
+                memcpy(entry, &es->name[i], sizeof(es->name[i]));
+                entry += sizeof(es->name[i]);
+            }
+            break;
+        }
+        entry += sizeof(struct exfat_entry_file);
+    }
+
+    /* Write updated cluster */
+    error = write_cluster(ctx, dir_cluster, buffer);
+    free(buffer);
+    return error;
+}
+
+/* Find a free cluster */
+int
+find_free_cluster(struct fsck_exfat_ctx *ctx, uint32_t *cluster)
+{
+    uint32_t *fat_sector;
+    uint32_t total_clusters = ctx->emp->boot.cluster_count;
+    uint32_t entries_per_sector = EXFAT_SECTOR_SIZE / sizeof(uint32_t);
+    uint32_t sector;
+    int error = 0;
+
+    /* Allocate buffer for FAT sector */
+    fat_sector = malloc(EXFAT_SECTOR_SIZE);
+    if (fat_sector == NULL) {
+        report_error(ctx, FSCK_ERR_FATAL, "Cannot allocate FAT sector buffer");
+        return -1;
+    }
+
+    /* Search FAT for free cluster */
+    for (sector = 0; sector < ctx->emp->boot.fat_length; sector++) {
+        error = read_fat_sector(ctx, sector, fat_sector);
+        if (error)
+            goto out;
+
+        for (uint32_t i = 0; i < entries_per_sector; i++) {
+            uint32_t c = sector * entries_per_sector + i + 2;
+            if (c >= total_clusters + 2)
+                goto out;
+
+            if (le32toh(fat_sector[i]) == EXFAT_CLUSTER_FREE) {
+                /* Found free cluster - mark as end of chain */
+                fat_sector[i] = htole32(EXFAT_CLUSTER_END);
+                error = write_fat_sector(ctx, sector, fat_sector);
+                if (error)
+                    goto out;
+                *cluster = c;
+                ctx->modified = 1;
+                goto out;
+            }
+        }
+    }
+
+    /* No free clusters found */
+    error = -1;
+
+out:
+    free(fat_sector);
+    return error;
+}
+
+/* Get next cluster in chain */
+int
+get_next_cluster(struct fsck_exfat_ctx *ctx, uint32_t cluster, uint32_t *next)
+{
+    uint32_t *fat_sector;
+    int error;
+
+    /* Allocate buffer for FAT sector */
+    fat_sector = malloc(EXFAT_SECTOR_SIZE);
+    if (fat_sector == NULL) {
+        report_error(ctx, FSCK_ERR_FATAL, "Cannot allocate FAT sector buffer");
+        return -1;
+    }
+
+    /* Read FAT sector */
+    error = read_fat_sector(ctx, cluster / (EXFAT_SECTOR_SIZE / 4), fat_sector);
+    if (error) {
+        free(fat_sector);
+        return error;
+    }
+
+    /* Get next cluster */
+    *next = le32toh(fat_sector[cluster % (EXFAT_SECTOR_SIZE / 4)]);
+    free(fat_sector);
+    return 0;
+}
+
+/* Convert Unix timestamp to ExFAT date/time */
+void
+unix_time_to_exfat(const struct timespec *ts, uint32_t *date, uint32_t *time)
+{
+    struct tm tm;
+
+    localtime_r(&ts->tv_sec, &tm);
+
+    *date = ((tm.tm_year - 80) << 9) |  /* Year since 1980 */
+            ((tm.tm_mon + 1) << 5) |     /* Month (1-12) */
+            tm.tm_mday;                  /* Day (1-31) */
+
+    *time = (tm.tm_hour << 11) |         /* Hour (0-23) */
+            (tm.tm_min << 5) |           /* Minute (0-59) */
+            (tm.tm_sec >> 1);            /* Second/2 (0-29) */
+}
+
+/* Convert UTF-8 to UTF-16 */
+int
+exfat_utf8_to_utf16(const char *utf8, uint16_t *utf16, size_t maxout, size_t *lenout)
+{
+    size_t len = 0;
+    uint32_t codepoint;
+    const uint8_t *s = (const uint8_t *)utf8;
+
+    while (*s && len < maxout) {
+        /* Decode UTF-8 sequence */
+        if ((*s & 0x80) == 0) {
+            /* 1-byte sequence */
+            codepoint = *s++;
+        } else if ((*s & 0xE0) == 0xC0) {
+            /* 2-byte sequence */
+            if ((s[1] & 0xC0) != 0x80)
+                return -1;
+            codepoint = ((*s & 0x1F) << 6) | (s[1] & 0x3F);
+            s += 2;
+        } else if ((*s & 0xF0) == 0xE0) {
+            /* 3-byte sequence */
+            if ((s[1] & 0xC0) != 0x80 || (s[2] & 0xC0) != 0x80)
+                return -1;
+            codepoint = ((*s & 0x0F) << 12) |
+                       ((s[1] & 0x3F) << 6) |
+                       (s[2] & 0x3F);
+            s += 3;
+        } else {
+            /* Invalid sequence */
+            return -1;
+        }
+
+        /* Encode as UTF-16 */
+        if (codepoint < 0x10000) {
+            utf16[len++] = htole16(codepoint);
+        } else if (codepoint < 0x110000 && len + 1 < maxout) {
+            /* Surrogate pair */
+            codepoint -= 0x10000;
+            utf16[len++] = htole16(0xD800 | (codepoint >> 10));
+            utf16[len++] = htole16(0xDC00 | (codepoint & 0x3FF));
+        } else {
+            return -1;
+        }
+    }
+
+    *lenout = len;
     return 0;
 }
 

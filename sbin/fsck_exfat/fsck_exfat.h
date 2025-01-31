@@ -210,13 +210,9 @@ int check_fat(struct fsck_exfat_ctx *ctx);
 int check_root_dir(struct fsck_exfat_ctx *ctx);
 int check_directory(struct fsck_exfat_ctx *ctx, uint32_t cluster);
 int check_file(struct fsck_exfat_ctx *ctx, struct exfat_direntry_set *es);
-int check_cluster_chain(struct fsck_exfat_ctx *ctx, uint32_t start_cluster, uint64_t expected_size);
 int check_bitmap(struct fsck_exfat_ctx *ctx);
+int check_cluster_chain(struct fsck_exfat_ctx *ctx, uint32_t start_cluster, uint64_t expected_size);
 int check_upcase_table(struct fsck_exfat_ctx *ctx);
-
-/* Recovery functions */
-int create_lost_found_dir(struct fsck_exfat_ctx *ctx);
-int create_lost_file(struct fsck_exfat_ctx *ctx, uint32_t cluster);
 
 /* Utility functions */
 void report_error(struct fsck_exfat_ctx *ctx, int level, const char *fmt, ...);
@@ -228,5 +224,9 @@ int find_free_cluster(struct fsck_exfat_ctx *ctx, uint32_t *cluster);
 int get_next_cluster(struct fsck_exfat_ctx *ctx, uint32_t cluster, uint32_t *next);
 void unix_time_to_exfat(const struct timespec *ts, uint32_t *date, uint32_t *time);
 int exfat_utf8_to_utf16(const char *utf8, uint16_t *utf16, size_t maxout, size_t *lenout);
+
+/* Recovery functions */
+int create_lost_found_dir(struct fsck_exfat_ctx *ctx);
+int create_lost_file(struct fsck_exfat_ctx *ctx, uint32_t cluster);
 
 #endif /* _FSCK_EXFAT_H_ */ 
