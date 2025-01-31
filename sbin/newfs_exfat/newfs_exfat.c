@@ -32,8 +32,8 @@
 static void
 usage(void)
 {
-    fprintf(stderr, "usage: newfs_exfat [-N] [-F FATs] [-S bytes] "
-            "[-b cluster-size] [-v] special\n");
+    fprintf(stderr, "usage: newfs_exfat [-N] [-S bytes] "
+            "[-b cluster-size] [-v] [-y] special\n");
     exit(1);
 }
 
@@ -546,12 +546,28 @@ out:
     return error;
 }
 
+static int
+confirm_format(const char *device)
+{
+    char reply[10];
+
+    printf("newfs_exfat: warning: %s will be formatted. All data will be lost!\n", device);
+    printf("Proceed? (y/n) ");
+    fflush(stdout);
+
+    if (fgets(reply, sizeof(reply), stdin) == NULL)
+        return 0;
+
+    return (reply[0] == 'y' || reply[0] == 'Y');
+}
+
 int
 main(int argc, char *argv[])
 {
     struct mkfs_exfat_ctx ctx;
     struct stat sb;
     int ch;
+    int yes = 0;
 
     /* Initialize context */
     memset(&ctx, 0, sizeof(ctx));
@@ -560,13 +576,8 @@ main(int argc, char *argv[])
     ctx.number_of_fats = EXFAT_DEFAULT_FATS;
 
     /* Parse command line options */
-    while ((ch = getopt(argc, argv, "F:NS:b:v")) != -1) {
+    while ((ch = getopt(argc, argv, "NS:b:vy")) != -1) {
         switch (ch) {
-        case 'F':
-            ctx.number_of_fats = atoi(optarg);
-            if (ctx.number_of_fats < 1 || ctx.number_of_fats > 2)
-                errx(1, "number of FATs must be 1 or 2");
-            break;
         case 'N':
             /* Print parameters only - not implemented yet */
             break;
@@ -583,6 +594,9 @@ main(int argc, char *argv[])
         case 'v':
             ctx.verbose = 1;
             break;
+        case 'y':
+            yes = 1;
+            break;
         default:
             usage();
         }
@@ -592,6 +606,10 @@ main(int argc, char *argv[])
 
     if (argc != 1)
         usage();
+
+    /* Confirm format unless -y was specified */
+    if (!yes && !confirm_format(argv[0]))
+        errx(1, "Format canceled");
 
     /* Open the device */
     ctx.device = argv[0];

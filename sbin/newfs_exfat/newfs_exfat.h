@@ -173,7 +173,7 @@ int exfat_utf8_to_utf16(const char *utf8, uint16_t *utf16, size_t maxout, size_t
 #define EXFAT_DEFAULT_CLUSTER_SIZE   32768    /* 32KB */
 #define EXFAT_MIN_CLUSTER_SIZE       4096     /* 4KB */
 #define EXFAT_MAX_CLUSTER_SIZE       32*1024*1024  /* 32MB */
-#define EXFAT_DEFAULT_FATS           1        /* Number of FATs */
+#define EXFAT_DEFAULT_FATS           1        /* ExFAT always has 1 FAT */
 #define EXFAT_DEFAULT_ROOTDIR_SIZE   65536    /* Root dir size */
 
 /* Formatting limits */
