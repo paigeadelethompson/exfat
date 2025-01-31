@@ -20,41 +20,15 @@
 
 #include <sys/types.h>
 #include <sys/param.h>
+#include <time.h>
 
-/* Forward declarations */
-struct exfat_mount;
-struct exfat_direntry_set;
-
-/* fsck context structure */
-struct fsck_exfat_ctx {
-    const char *device;          /* Device name */
-    int fd;                      /* Device file descriptor */
-    struct exfat_mount *emp;     /* Mount structure */
-    int modified;                /* Set if filesystem was modified */
-    int errors;                  /* Number of errors found */
-    int fix_errors;              /* Fix errors if found */
-    int verbose;                 /* Verbose output */
-    uint32_t lost_found_cluster; /* First cluster of lost+found directory */
-    uint32_t next_lost_file;    /* Counter for lost file names */
-};
-
-/* Error severity levels */
-#define FSCK_ERR_FATAL      1   /* Fatal error - abort */
-#define FSCK_ERR_SERIOUS    2   /* Serious error - continue with caution */
-#define FSCK_ERR_NORMAL     3   /* Normal error - can be fixed */
-
-/* Function prototypes */
-int check_boot_sector(struct fsck_exfat_ctx *ctx);
-int check_fat(struct fsck_exfat_ctx *ctx);
-int check_root_dir(struct fsck_exfat_ctx *ctx);
-int check_directory(struct fsck_exfat_ctx *ctx, uint32_t cluster);
-int check_file(struct fsck_exfat_ctx *ctx, struct exfat_direntry_set *es);
-int check_cluster_chain(struct fsck_exfat_ctx *ctx, uint32_t start_cluster);
-void report_error(struct fsck_exfat_ctx *ctx, int level, const char *fmt, ...);
-
-#ifndef _FSCK_EXFAT_EXFAT_H_
-#define _FSCK_EXFAT_EXFAT_H_
-
+/* ExFAT timestamp macros */
+#define EXFAT_YEAR(date)    (((date) >> 9) + 1980)
+#define EXFAT_MONTH(date)   (((date) >> 5) & 0xF)
+#define EXFAT_DAY(date)     ((date) & 0x1F)
+#define EXFAT_HOUR(time)    ((time) >> 11)
+#define EXFAT_MINUTE(time)  (((time) >> 5) & 0x3F)
+#define EXFAT_SECOND(time)  (((time) & 0x1F) << 1)
 
 /* ExFAT filesystem constants */
 #define EXFAT_SECTOR_SIZE          512
@@ -69,6 +43,7 @@ void report_error(struct fsck_exfat_ctx *ctx, int level, const char *fmt, ...);
 
 /* ExFAT directory entry types */
 #define EXFAT_ENTRY_EOD            0x00
+#define EXFAT_ENTRY_DELETED        0xE5
 #define EXFAT_ENTRY_BITMAP         0x81
 #define EXFAT_ENTRY_UPCASE         0x82
 #define EXFAT_ENTRY_LABEL          0x83
@@ -191,5 +166,67 @@ struct exfat_entry_label {
     uint16_t volume_label[11];    /* UTF-16 characters */
     uint8_t  reserved[8];
 };
+
+/* Mount structure */
+struct exfat_mount {
+    struct exfat_boot_record boot;  /* Boot sector */
+    uint32_t *fat;                /* FAT table */
+    uint8_t *bitmap;              /* Allocation bitmap */
+    uint16_t *upcase;             /* Upcase table */
+    uint32_t bitmap_cluster;      /* First cluster of bitmap */
+};
+
+/* Directory entry set */
+struct exfat_direntry_set {
+    struct exfat_entry_file file;
+    struct exfat_entry_stream stream;
+    struct exfat_entry_name name[16];
+    int name_count;
+};
+
+/* fsck context structure */
+struct fsck_exfat_ctx {
+    const char *device;          /* Device name */
+    int fd;                      /* Device file descriptor */
+    struct exfat_mount *emp;     /* Mount structure */
+    int modified;                /* Set if filesystem was modified */
+    int errors;                  /* Number of errors found */
+    int fix_errors;              /* Fix errors if found */
+    int verbose;                 /* Verbose output */
+    uint32_t lost_found_cluster; /* First cluster of lost+found directory */
+    uint32_t next_lost_file;    /* Counter for lost file names */
+    uint32_t bitmap_cluster;     /* First cluster of allocation bitmap */
+};
+
+/* Error severity levels */
+#define FSCK_ERR_FATAL      1   /* Fatal error - abort */
+#define FSCK_ERR_SERIOUS    2   /* Serious error - continue with caution */
+#define FSCK_ERR_NORMAL     3   /* Normal error - can be fixed */
+
+/* Function prototypes */
+/* Core checking functions */
+int check_boot_sector(struct fsck_exfat_ctx *ctx);
+int check_fat(struct fsck_exfat_ctx *ctx);
+int check_root_dir(struct fsck_exfat_ctx *ctx);
+int check_directory(struct fsck_exfat_ctx *ctx, uint32_t cluster);
+int check_file(struct fsck_exfat_ctx *ctx, struct exfat_direntry_set *es);
+int check_cluster_chain(struct fsck_exfat_ctx *ctx, uint32_t start_cluster, uint64_t expected_size);
+int check_bitmap(struct fsck_exfat_ctx *ctx);
+int check_upcase_table(struct fsck_exfat_ctx *ctx);
+
+/* Recovery functions */
+int create_lost_found_dir(struct fsck_exfat_ctx *ctx);
+int create_lost_file(struct fsck_exfat_ctx *ctx, uint32_t cluster);
+
+/* Utility functions */
+void report_error(struct fsck_exfat_ctx *ctx, int level, const char *fmt, ...);
+uint16_t exfat_calc_name_hash(struct exfat_mount *emp, const uint16_t *name, size_t len);
+uint16_t exfat_checksum_direntry(struct exfat_direntry_set *es);
+int write_cluster(struct fsck_exfat_ctx *ctx, uint32_t cluster, const void *buffer);
+int write_direntry(struct fsck_exfat_ctx *ctx, uint32_t dir_cluster, struct exfat_direntry_set *es);
+int find_free_cluster(struct fsck_exfat_ctx *ctx, uint32_t *cluster);
+int get_next_cluster(struct fsck_exfat_ctx *ctx, uint32_t cluster, uint32_t *next);
+void unix_time_to_exfat(const struct timespec *ts, uint32_t *date, uint32_t *time);
+int exfat_utf8_to_utf16(const char *utf8, uint16_t *utf16, size_t maxout, size_t *lenout);
 
 #endif /* _FSCK_EXFAT_H_ */ 
