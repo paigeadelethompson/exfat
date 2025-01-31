@@ -43,12 +43,12 @@ static struct mntopt mopts[] = {
     MOPT_SYNC,
     MOPT_UPDATE,
     MOPT_NOATIME,
-    { "uid", 0, EXFAT_MNT_UID, 0, 0 },
-    { "gid", 0, EXFAT_MNT_GID, 0, 0 },
-    { "mask", 0, EXFAT_MNT_MASK, 0, 0 },
-    { "dmask", 0, EXFAT_MNT_DMASK, 0, 0 },
-    { "fmask", 0, EXFAT_MNT_FMASK, 0, 0 },
-    { NULL, 0, 0, 0, 0 }
+    { "uid", 0, EXFAT_MNT_UID, 0 },
+    { "gid", 0, EXFAT_MNT_GID, 0 },
+    { "mask", 0, EXFAT_MNT_MASK, 0 },
+    { "dmask", 0, EXFAT_MNT_DMASK, 0 },
+    { "fmask", 0, EXFAT_MNT_FMASK, 0 },
+    { NULL, 0, 0, 0 }
 };
 
 static void
