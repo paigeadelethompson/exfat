@@ -31,7 +31,7 @@
 #include <unistd.h>
 
 #include "mount_exfat.h"
-#include "/usr/src/sbin/mount/mntopts.h"
+#include "mntopts.h"
 
 /* Function declarations */
 const char *getval(const char *option, const char *optlist);
