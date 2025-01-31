@@ -34,8 +34,26 @@
 #include "mount_exfat.h"
 #include "mntopts.h"
 
-/* Function declarations */
-const char *getval(const char *option, const char *optlist);
+/* Parse option value from options string (e.g. "uid=1000" returns "1000") */
+static const char *
+get_option_value(const char *option, const char *options)
+{
+    size_t optlen = strlen(option);
+    const char *p = options;
+
+    while ((p = strstr(p, option)) != NULL) {
+        /* Check if it's the start of options or preceded by comma */
+        if (p != options && p[-1] != ',') {
+            p += optlen;
+            continue;
+        }
+        /* Check if followed by equals sign */
+        if (p[optlen] == '=')
+            return p + optlen + 1;
+        p += optlen;
+    }
+    return NULL;
+}
 
 static struct mntopt mopts[] = {
     MOPT_STDOPTS,
@@ -153,15 +171,15 @@ main(int argc, char *argv[])
             getmntopts(optarg, mopts, &mntflags, &altflags);
             args.flags = (u_int)altflags;
             if (args.flags & EXFAT_MNT_UID)
-                uid = (uid_t)strtoul(getval("uid", optarg), NULL, 0);
+                uid = (uid_t)strtoul(get_option_value("uid", optarg), NULL, 0);
             if (args.flags & EXFAT_MNT_GID)
-                gid = (gid_t)strtoul(getval("gid", optarg), NULL, 0);
+                gid = (gid_t)strtoul(get_option_value("gid", optarg), NULL, 0);
             if (args.flags & EXFAT_MNT_MASK)
-                mask = (mode_t)strtoul(getval("mask", optarg), NULL, 8);
+                mask = (mode_t)strtoul(get_option_value("mask", optarg), NULL, 8);
             if (args.flags & EXFAT_MNT_DMASK)
-                dmask = (mode_t)strtoul(getval("dmask", optarg), NULL, 8);
+                dmask = (mode_t)strtoul(get_option_value("dmask", optarg), NULL, 8);
             if (args.flags & EXFAT_MNT_FMASK)
-                fmask = (mode_t)strtoul(getval("fmask", optarg), NULL, 8);
+                fmask = (mode_t)strtoul(get_option_value("fmask", optarg), NULL, 8);
             break;
         default:
             usage();
