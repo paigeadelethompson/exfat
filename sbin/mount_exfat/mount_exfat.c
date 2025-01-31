@@ -176,6 +176,10 @@ main(int argc, char *argv[])
     dev = argv[0];
     dir = argv[1];
 
+    /* Validate device and mountpoint */
+    if (validate_device(dev) != 0 || validate_mountpoint(dir) != 0)
+        return EX_USAGE;
+
     /* Set up mount arguments */
     args.fspec = dev;
     args.uid = uid;
