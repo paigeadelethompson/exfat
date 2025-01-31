@@ -161,11 +161,14 @@ calculate_layout(struct mkfs_exfat_ctx *ctx)
 
     /* If cluster size not specified, auto-select based on volume size */
     if (ctx->sectors_per_cluster == 0) {
-        if (ctx->total_sectors < 2097152)        /* < 1GB */
+        uint64_t size_mb = (ctx->total_sectors * EXFAT_SECTOR_SIZE) / (1024 * 1024);
+        if (size_mb < 7)                        /* < 7MB */
+            errx(1, "Device too small for ExFAT");
+        else if (size_mb < 256)                 /* 7MB - 256MB */
             ctx->sectors_per_cluster = 8;        /* 4KB */
-        else if (ctx->total_sectors < 16777216)  /* < 8GB */
+        else if (size_mb < 32 * 1024)           /* 256MB - 32GB */
             ctx->sectors_per_cluster = 64;       /* 32KB */
-        else
+        else                                     /* 32GB - 256TB */
             ctx->sectors_per_cluster = 256;      /* 128KB */
     }
 
