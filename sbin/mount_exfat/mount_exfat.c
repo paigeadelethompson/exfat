@@ -19,6 +19,7 @@
 #include <sys/mount.h>
 #include <sys/stat.h>
 #include <sys/sysctl.h>
+#include <sys/module.h>
 
 #include <err.h>
 #include <errno.h>
@@ -31,6 +32,9 @@
 
 #include "mount_exfat.h"
 #include "/usr/src/sbin/mount/mntopts.h"
+
+/* Function declarations */
+const char *getval(const char *option, const char *optlist);
 
 static struct mntopt mopts[] = {
     MOPT_STDOPTS,
@@ -132,7 +136,7 @@ main(int argc, char *argv[])
 {
     struct exfat_args args;
     char *dev, *dir;
-    int ch, mntflags;
+    int ch, mntflags, altflags;
     mode_t mask = 0, dmask = 0, fmask = 0;
     uid_t uid = 0;
     gid_t gid = 0;
@@ -140,11 +144,13 @@ main(int argc, char *argv[])
 
     memset(&args, 0, sizeof(args));
     mntflags = 0;
+    altflags = 0;
 
     while ((ch = getopt(argc, argv, "o:")) != -1) {
         switch (ch) {
         case 'o':
-            getmntopts(optarg, mopts, &mntflags, &args.flags);
+            getmntopts(optarg, mopts, &mntflags, &altflags);
+            args.flags = (u_int)altflags;
             if (args.flags & EXFAT_MNT_UID)
                 uid = (uid_t)strtoul(getval("uid", optarg), NULL, 0);
             if (args.flags & EXFAT_MNT_GID)
