@@ -22,29 +22,24 @@
 #include <sys/param.h>
 
 /* Format context structure */
-struct mkfs_exfat_ctx {
+struct newfs_exfat_ctx {
     const char *device;          /* Device name */
     int fd;                      /* Device file descriptor */
-    off_t dev_size;             /* Device size in bytes */
-    uint32_t cluster_size;      /* Cluster size in bytes */
-    uint32_t volume_serial;     /* Volume serial number */
-    char *volume_label;         /* Volume label */
-    struct exfat_boot_record boot;  /* Boot sector */
-    uint32_t cluster_heap_offset; /* Offset to cluster heap */
-    uint32_t cluster_count;     /* Total number of clusters */
-    uint32_t bitmap_cluster;    /* First cluster of bitmap */
-    uint32_t upcase_cluster;    /* First cluster of upcase table */
-    uint32_t root_cluster;      /* First cluster of root directory */
-    uint32_t first_cluster;     /* First available cluster */
-    int verbose;                /* Verbose output */
+    uint64_t total_sectors;      /* Total sectors on device */
+    uint32_t bytes_per_sector;   /* Bytes per sector (usually 512) */
+    uint32_t sectors_per_cluster; /* Sectors per cluster */
+    uint32_t cluster_count;      /* Number of clusters */
+    uint32_t fat_sectors;        /* Sectors per FAT */
+    uint8_t number_of_fats;      /* Number of FATs (1 or 2) */
+    int verbose;                 /* Verbose output */
 };
 
 /* Function prototypes */
-int write_boot_sector(struct mkfs_exfat_ctx *ctx);
-int write_fat(struct mkfs_exfat_ctx *ctx);
-int write_root_dir(struct mkfs_exfat_ctx *ctx);
-int write_bitmap(struct mkfs_exfat_ctx *ctx);
-int write_upcase_table(struct mkfs_exfat_ctx *ctx);
+int write_boot_sector(struct newfs_exfat_ctx *ctx);
+int write_fat(struct newfs_exfat_ctx *ctx);
+int write_root_dir(struct newfs_exfat_ctx *ctx);
+int write_bitmap(struct newfs_exfat_ctx *ctx);
+int write_upcase_table(struct newfs_exfat_ctx *ctx);
 
 /* ExFAT filesystem constants */
 #define EXFAT_SECTOR_SIZE          512

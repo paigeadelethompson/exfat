@@ -32,7 +32,8 @@
 static void
 usage(void)
 {
-    fprintf(stderr, "usage: mkfs_exfat [-n label] [-s sectors-per-cluster] [-v] device\n");
+    fprintf(stderr, "usage: newfs_exfat [-N] [-F FATs] [-S bytes] "
+            "[-b cluster-size] [-v] special\n");
     exit(1);
 }
 
@@ -152,109 +153,108 @@ calculate_layout(struct mkfs_exfat_ctx *ctx)
     return 0;
 }
 
-static int
+int
 write_boot_sector(struct mkfs_exfat_ctx *ctx)
 {
-    uint8_t *sector;
-    int error = 0;
-
-    sector = calloc(1, EXFAT_SECTOR_SIZE);
-    if (sector == NULL) {
-        warn("Cannot allocate sector buffer");
-        return -1;
-    }
+    struct exfat_boot_record boot;
+    struct timespec ts;
+    uint32_t volume_serial;
 
     /* Initialize boot sector */
-    struct exfat_boot_record *boot = (struct exfat_boot_record *)sector;
+    memset(&boot, 0, sizeof(boot));
 
-    /* Jump instruction and filesystem name */
-    boot->jump_boot[0] = 0xEB;
-    boot->jump_boot[1] = 0x76;
-    boot->jump_boot[2] = 0x90;
-    memcpy(boot->fs_name, "EXFAT   ", 8);
+    /* Set up jump instruction and filesystem name */
+    boot.jump_boot[0] = 0xEB;
+    boot.jump_boot[1] = 0x76;
+    boot.jump_boot[2] = 0x90;
+    memcpy(boot.fs_name, "EXFAT   ", 8);
 
-    /* Copy calculated parameters */
-    memcpy(&boot->partition_offset, &ctx->boot.partition_offset,
-           sizeof(struct exfat_boot_record) - 
-           offsetof(struct exfat_boot_record, partition_offset));
+    /* Calculate volume layout */
+    boot.bytes_per_sector_shift = ffs(ctx->bytes_per_sector) - 1;
+    boot.sectors_per_cluster_shift = ffs(ctx->sectors_per_cluster) - 1;
+    boot.number_of_fats = ctx->number_of_fats;
+    boot.volume_length = ctx->total_sectors;
+    boot.fat_offset = 24;  /* Standard offset after boot sectors */
+    boot.fat_length = ctx->fat_sectors;
+    boot.cluster_heap_offset = boot.fat_offset + 
+                              boot.fat_length * boot.number_of_fats;
+    boot.cluster_count = ctx->cluster_count;
+    boot.root_dir_cluster = 2;  /* First available cluster */
 
-    /* Write main boot sector */
-    if (write_sector(ctx, 0, sector) < 0) {
-        error = -1;
-        goto out;
-    }
+    /* Generate random volume serial number */
+    clock_gettime(CLOCK_REALTIME, &ts);
+    volume_serial = ts.tv_sec ^ ts.tv_nsec;
+    boot.volume_serial = volume_serial;
+
+    /* Set filesystem revision to 1.00 */
+    boot.fs_revision = 0x0100;
+
+    /* Set boot signature */
+    boot.boot_signature = EXFAT_BOOT_SIGNATURE;
+
+    /* Write boot sector */
+    if (lseek(ctx->fd, 0, SEEK_SET) != 0)
+        return -1;
+    if (write(ctx->fd, &boot, sizeof(boot)) != sizeof(boot))
+        return -1;
 
     /* Write backup boot sector */
-    if (write_sector(ctx, 12, sector) < 0) {
-        error = -1;
-        goto out;
-    }
+    if (lseek(ctx->fd, 12 * ctx->bytes_per_sector, SEEK_SET) < 0)
+        return -1;
+    if (write(ctx->fd, &boot, sizeof(boot)) != sizeof(boot))
+        return -1;
 
-    /* Write remaining boot sectors with zeros */
-    memset(sector, 0, EXFAT_SECTOR_SIZE);
-    for (int i = 1; i < 12; i++) {
-        if (write_sector(ctx, i, sector) < 0) {
-            error = -1;
-            goto out;
-        }
-    }
-    for (int i = 13; i < 24; i++) {
-        if (write_sector(ctx, i, sector) < 0) {
-            error = -1;
-            goto out;
-        }
-    }
-
-out:
-    free(sector);
-    return error;
+    return 0;
 }
 
 int
 write_fat(struct mkfs_exfat_ctx *ctx)
 {
     uint32_t *fat_sector;
-    uint32_t total_sectors, fat_sectors, cluster_count;
-    uint32_t sector;
+    size_t i;
 
-    /* Calculate layout */
-    total_sectors = ctx->dev_size / EXFAT_SECTOR_SIZE;
-    cluster_count = (total_sectors - 24) / (ctx->cluster_size / EXFAT_SECTOR_SIZE);
-    fat_sectors = (cluster_count * 4 + EXFAT_SECTOR_SIZE - 1) / EXFAT_SECTOR_SIZE;
-
-    /* Allocate buffer for one FAT sector */
-    fat_sector = malloc(EXFAT_SECTOR_SIZE);
-    if (fat_sector == NULL) {
-        warn("Cannot allocate FAT sector buffer");
+    /* Allocate buffer for FAT sector */
+    fat_sector = calloc(1, ctx->bytes_per_sector);
+    if (fat_sector == NULL)
         return -1;
-    }
 
-    /* Initialize first FAT sector */
-    memset(fat_sector, 0, EXFAT_SECTOR_SIZE);
-    fat_sector[0] = htole32(0xFFFFFFF8);  /* Media descriptor */
-    fat_sector[1] = htole32(0xFFFFFFFF);  /* EOC marker */
-    fat_sector[2] = htole32(EXFAT_CLUSTER_END);  /* Bitmap */
-    fat_sector[3] = htole32(EXFAT_CLUSTER_END);  /* Upcase table */
-    fat_sector[4] = htole32(EXFAT_CLUSTER_END);  /* Root directory */
+    /* First two clusters are reserved */
+    fat_sector[0] = htole32(0xFFFFFFF8);  /* Media type */
+    fat_sector[1] = htole32(0xFFFFFFFF);  /* End of cluster chain */
+
+    /* Root directory cluster */
+    fat_sector[2] = htole32(0xFFFFFFFF);  /* End of cluster chain */
 
     /* Write first FAT sector */
-    if (write_sector(ctx, 24, fat_sector) < 0) {
-        free(fat_sector);
-        return -1;
+    if (lseek(ctx->fd, ctx->bytes_per_sector * 24, SEEK_SET) < 0)
+        goto error;
+    if (write(ctx->fd, fat_sector, ctx->bytes_per_sector) != ctx->bytes_per_sector)
+        goto error;
+
+    /* Clear remaining FAT sectors */
+    memset(fat_sector, 0, ctx->bytes_per_sector);
+    for (i = 1; i < ctx->fat_sectors; i++) {
+        if (write(ctx->fd, fat_sector, ctx->bytes_per_sector) != ctx->bytes_per_sector)
+            goto error;
     }
 
-    /* Initialize remaining FAT sectors to zero */
-    memset(fat_sector, 0, EXFAT_SECTOR_SIZE);
-    for (sector = 1; sector < fat_sectors; sector++) {
-        if (write_sector(ctx, 24 + sector, fat_sector) < 0) {
-            free(fat_sector);
-            return -1;
+    /* Write second FAT if needed */
+    if (ctx->number_of_fats == 2) {
+        if (lseek(ctx->fd, ctx->bytes_per_sector * (24 + ctx->fat_sectors), SEEK_SET) < 0)
+            goto error;
+        for (i = 0; i < ctx->fat_sectors; i++) {
+            if (write(ctx->fd, fat_sector, ctx->bytes_per_sector) != ctx->bytes_per_sector)
+                goto error;
         }
     }
 
     free(fat_sector);
     report_progress(ctx, "FAT written");
     return 0;
+
+error:
+    free(fat_sector);
+    return -1;
 }
 
 static int
@@ -287,34 +287,31 @@ int
 write_bitmap(struct mkfs_exfat_ctx *ctx)
 {
     uint8_t *bitmap;
-    uint32_t bitmap_size;
-    uint32_t bitmap_clusters;
-    uint32_t i;
+    size_t bitmap_size;
+    size_t i;
 
     /* Calculate bitmap size (rounded up to cluster size) */
     bitmap_size = (ctx->cluster_count + 7) / 8;
-    bitmap_clusters = (bitmap_size + ctx->cluster_size - 1) / ctx->cluster_size;
-    bitmap_size = bitmap_clusters * ctx->cluster_size;
+    bitmap_size = roundup2(bitmap_size, ctx->bytes_per_sector * ctx->sectors_per_cluster);
 
-    /* Allocate bitmap buffer */
+    /* Allocate bitmap */
     bitmap = calloc(1, bitmap_size);
-    if (bitmap == NULL) {
-        warn("Cannot allocate bitmap buffer");
+    if (bitmap == NULL)
+        return -1;
+
+    /* Mark first three clusters as used (reserved, root dir, bitmap) */
+    bitmap[0] = 0x07;
+
+    /* Write bitmap */
+    if (lseek(ctx->fd, ctx->bytes_per_sector * 
+        (24 + ctx->fat_sectors * ctx->number_of_fats + ctx->sectors_per_cluster), 
+        SEEK_SET) < 0) {
+        free(bitmap);
         return -1;
     }
-
-    /* Mark system clusters as allocated */
-    for (i = 0; i < ctx->first_cluster - 2; i++) {
-        bitmap[i / 8] |= 1 << (i % 8);
-    }
-
-    /* Write bitmap clusters */
-    for (i = 0; i < bitmap_clusters; i++) {
-        if (write_cluster(ctx, ctx->bitmap_cluster + i,
-                         bitmap + i * ctx->cluster_size) < 0) {
-            free(bitmap);
-            return -1;
-        }
+    if (write(ctx->fd, bitmap, bitmap_size) != bitmap_size) {
+        free(bitmap);
+        return -1;
     }
 
     free(bitmap);
@@ -495,21 +492,30 @@ main(int argc, char *argv[])
 
     /* Initialize context */
     memset(&ctx, 0, sizeof(ctx));
-    ctx.cluster_size = 32768;  /* Default: 32KB */
+    ctx.bytes_per_sector = 512;
+    ctx.sectors_per_cluster = EXFAT_DEFAULT_CLUSTER_SIZE / 512;
+    ctx.number_of_fats = EXFAT_DEFAULT_FATS;
 
     /* Parse command line options */
-    while ((ch = getopt(argc, argv, "n:s:v")) != -1) {
+    while ((ch = getopt(argc, argv, "F:NS:b:v")) != -1) {
         switch (ch) {
-        case 'n':
-            ctx.volume_label = optarg;
+        case 'F':
+            ctx.number_of_fats = atoi(optarg);
+            if (ctx.number_of_fats < 1 || ctx.number_of_fats > 2)
+                errx(1, "number of FATs must be 1 or 2");
             break;
-        case 's':
-            ctx.cluster_size = atoi(optarg) * EXFAT_SECTOR_SIZE;
-            if (ctx.cluster_size < EXFAT_SECTOR_SIZE ||
-                ctx.cluster_size > 32 * 1024 * 1024 ||
-                (ctx.cluster_size & (ctx.cluster_size - 1)) != 0) {
-                errx(1, "Invalid cluster size");
-            }
+        case 'N':
+            /* Print parameters only - not implemented yet */
+            break;
+        case 'S':
+            ctx.bytes_per_sector = atoi(optarg);
+            if (ctx.bytes_per_sector < 512 || ctx.bytes_per_sector > 4096)
+                errx(1, "bytes per sector must be between 512 and 4096");
+            break;
+        case 'b':
+            ctx.sectors_per_cluster = atoi(optarg) / ctx.bytes_per_sector;
+            if (ctx.sectors_per_cluster < 1)
+                errx(1, "cluster size must be at least one sector");
             break;
         case 'v':
             ctx.verbose = 1;
@@ -532,8 +538,20 @@ main(int argc, char *argv[])
 
     /* Get device size */
     if (fstat(ctx.fd, &sb) < 0)
-        err(1, "Cannot stat device");
-    ctx.dev_size = sb.st_size;
+        err(1, "Cannot stat %s", ctx.device);
+    if (S_ISREG(sb.st_mode))
+        ctx.total_sectors = sb.st_size / ctx.bytes_per_sector;
+    else {
+        off_t size = lseek(ctx.fd, 0, SEEK_END);
+        if (size < 0)
+            err(1, "Cannot determine device size");
+        ctx.total_sectors = size / ctx.bytes_per_sector;
+    }
+
+    /* Calculate filesystem parameters */
+    ctx.cluster_count = (ctx.total_sectors - 24) / ctx.sectors_per_cluster;
+    ctx.fat_sectors = (ctx.cluster_count * 4 + ctx.bytes_per_sector - 1) / 
+                     ctx.bytes_per_sector;
 
     /* Generate volume serial number */
     ctx.volume_serial = generate_volume_serial();
