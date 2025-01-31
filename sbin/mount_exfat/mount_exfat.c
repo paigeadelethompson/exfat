@@ -23,7 +23,6 @@
 #include <err.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <sys/mntopts.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -31,6 +30,7 @@
 #include <unistd.h>
 
 #include "mount_exfat.h"
+#include "/usr/src/sbin/mount/mntopts.h"
 
 static struct mntopt mopts[] = {
     MOPT_STDOPTS,
