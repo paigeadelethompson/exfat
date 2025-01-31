@@ -65,6 +65,70 @@ generate_volume_serial(void)
            tm->tm_mday;
 }
 
+void
+unix_time_to_exfat(const struct timespec *ts, uint32_t *date, uint32_t *time)
+{
+    struct tm tm;
+
+    localtime_r(&ts->tv_sec, &tm);
+
+    *date = ((tm.tm_year - 80) << 9) |  /* Year since 1980 */
+            ((tm.tm_mon + 1) << 5) |     /* Month (1-12) */
+            tm.tm_mday;                  /* Day (1-31) */
+
+    *time = (tm.tm_hour << 11) |         /* Hour (0-23) */
+            (tm.tm_min << 5) |           /* Minute (0-59) */
+            (tm.tm_sec >> 1);            /* Second/2 (0-29) */
+}
+
+int
+exfat_utf8_to_utf16(const char *utf8, uint16_t *utf16, size_t maxout, size_t *lenout)
+{
+    size_t len = 0;
+    uint32_t codepoint;
+    const uint8_t *s = (const uint8_t *)utf8;
+
+    while (*s && len < maxout) {
+        /* Decode UTF-8 sequence */
+        if ((*s & 0x80) == 0) {
+            /* 1-byte sequence */
+            codepoint = *s++;
+        } else if ((*s & 0xE0) == 0xC0) {
+            /* 2-byte sequence */
+            if ((s[1] & 0xC0) != 0x80)
+                return -1;
+            codepoint = ((*s & 0x1F) << 6) | (s[1] & 0x3F);
+            s += 2;
+        } else if ((*s & 0xF0) == 0xE0) {
+            /* 3-byte sequence */
+            if ((s[1] & 0xC0) != 0x80 || (s[2] & 0xC0) != 0x80)
+                return -1;
+            codepoint = ((*s & 0x0F) << 12) |
+                       ((s[1] & 0x3F) << 6) |
+                       (s[2] & 0x3F);
+            s += 3;
+        } else {
+            /* Invalid sequence */
+            return -1;
+        }
+
+        /* Encode as UTF-16 */
+        if (codepoint < 0x10000) {
+            utf16[len++] = htole16(codepoint);
+        } else if (codepoint < 0x110000 && len + 1 < maxout) {
+            /* Surrogate pair */
+            codepoint -= 0x10000;
+            utf16[len++] = htole16(0xD800 | (codepoint >> 10));
+            utf16[len++] = htole16(0xDC00 | (codepoint & 0x3FF));
+        } else {
+            return -1;
+        }
+    }
+
+    *lenout = len;
+    return 0;
+}
+
 static int
 write_sector(struct mkfs_exfat_ctx *ctx, off_t sector, const void *buffer)
 {
