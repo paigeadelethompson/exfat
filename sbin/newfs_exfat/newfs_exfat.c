@@ -88,7 +88,6 @@ write_sector(struct mkfs_exfat_ctx *ctx, off_t sector, const void *buffer)
 static int
 calculate_layout(struct mkfs_exfat_ctx *ctx)
 {
-    uint64_t total_sectors = ctx->dev_size / EXFAT_SECTOR_SIZE;
     uint32_t sectors_per_cluster;
     uint32_t cluster_count;
     uint32_t fat_sectors;
@@ -97,19 +96,19 @@ calculate_layout(struct mkfs_exfat_ctx *ctx)
     uint32_t root_clusters = 1;  /* Start with 1 cluster for root dir */
 
     /* If cluster size not specified, auto-select based on volume size */
-    if (ctx->cluster_size == 0) {
-        if (total_sectors < 2097152)        /* < 1GB */
-            ctx->cluster_size = 4096;       /* 4KB */
-        else if (total_sectors < 16777216)  /* < 8GB */
-            ctx->cluster_size = 32768;      /* 32KB */
+    if (ctx->sectors_per_cluster == 0) {
+        if (ctx->total_sectors < 2097152)        /* < 1GB */
+            ctx->sectors_per_cluster = 8;        /* 4KB */
+        else if (ctx->total_sectors < 16777216)  /* < 8GB */
+            ctx->sectors_per_cluster = 64;       /* 32KB */
         else
-            ctx->cluster_size = 131072;     /* 128KB */
+            ctx->sectors_per_cluster = 256;      /* 128KB */
     }
 
-    sectors_per_cluster = ctx->cluster_size / EXFAT_SECTOR_SIZE;
+    sectors_per_cluster = ctx->sectors_per_cluster;
 
     /* Calculate number of clusters */
-    cluster_count = (total_sectors - 24) / sectors_per_cluster;
+    cluster_count = (ctx->total_sectors - 24) / sectors_per_cluster;
 
     /* Calculate FAT size (4 bytes per cluster) */
     fat_sectors = ((uint64_t)cluster_count * 4 + EXFAT_SECTOR_SIZE - 1) / 
@@ -117,16 +116,16 @@ calculate_layout(struct mkfs_exfat_ctx *ctx)
 
     /* Calculate bitmap size (1 bit per cluster) */
     bitmap_clusters = ((uint64_t)cluster_count + 7) / 8;
-    bitmap_clusters = (bitmap_clusters + ctx->cluster_size - 1) / ctx->cluster_size;
+    bitmap_clusters = (bitmap_clusters + ctx->sectors_per_cluster - 1) / ctx->sectors_per_cluster;
 
     /* Calculate upcase table size (128KB) */
-    upcase_clusters = (128 * 1024 + ctx->cluster_size - 1) / ctx->cluster_size;
+    upcase_clusters = (128 * 1024 + ctx->sectors_per_cluster - 1) / ctx->sectors_per_cluster;
 
     /* Store calculated values */
     ctx->boot.bytes_per_sector_shift = 9;  /* 512 bytes */
     ctx->boot.sectors_per_cluster_shift = ffs(sectors_per_cluster) - 1;
     ctx->boot.number_of_fats = 1;
-    ctx->boot.volume_length = total_sectors;
+    ctx->boot.volume_length = ctx->total_sectors;
     ctx->boot.fat_offset = 24;
     ctx->boot.fat_length = fat_sectors;
     ctx->boot.cluster_heap_offset = ctx->boot.fat_offset + fat_sectors;
@@ -145,7 +144,7 @@ calculate_layout(struct mkfs_exfat_ctx *ctx)
 
     /* Verify layout */
     if (ctx->boot.cluster_heap_offset + 
-        ((uint64_t)cluster_count * sectors_per_cluster) > total_sectors) {
+        ((uint64_t)cluster_count * sectors_per_cluster) > ctx->total_sectors) {
         warnx("Invalid filesystem layout - device too small");
         return -1;
     }
@@ -266,7 +265,7 @@ write_cluster(struct mkfs_exfat_ctx *ctx, uint32_t cluster, const void *buffer)
 
     /* Calculate cluster offset */
     offset = ((off_t)ctx->cluster_heap_offset +
-             ((off_t)cluster - 2) * (ctx->cluster_size / EXFAT_SECTOR_SIZE)) *
+             ((off_t)cluster - 2) * (ctx->sectors_per_cluster)) *
              EXFAT_SECTOR_SIZE;
 
     if (lseek(ctx->fd, offset, SEEK_SET) != offset) {
@@ -274,8 +273,8 @@ write_cluster(struct mkfs_exfat_ctx *ctx, uint32_t cluster, const void *buffer)
         return -1;
     }
 
-    bytes = write(ctx->fd, buffer, ctx->cluster_size);
-    if (bytes != ctx->cluster_size) {
+    bytes = write(ctx->fd, buffer, ctx->sectors_per_cluster * EXFAT_SECTOR_SIZE);
+    if (bytes != ctx->sectors_per_cluster * EXFAT_SECTOR_SIZE) {
         warn("write error");
         return -1;
     }
@@ -373,11 +372,11 @@ write_upcase_table(struct mkfs_exfat_ctx *ctx)
     }
 
     /* Write upcase table */
-    uint32_t clusters_needed = (table_size + ctx->cluster_size - 1) / ctx->cluster_size;
+    uint32_t clusters_needed = (table_size + ctx->sectors_per_cluster - 1) / ctx->sectors_per_cluster;
     for (i = 0; i < clusters_needed; i++) {
-        uint32_t write_size = MIN(ctx->cluster_size, table_size - i * ctx->cluster_size);
+        uint32_t write_size = MIN(ctx->sectors_per_cluster, table_size - i * ctx->sectors_per_cluster);
         if (write_cluster(ctx, ctx->upcase_cluster + i, 
-                         (uint8_t *)upcase + i * ctx->cluster_size) < 0) {
+                         (uint8_t *)upcase + i * ctx->sectors_per_cluster) < 0) {
             error = -1;
             goto out;
         }
@@ -398,7 +397,7 @@ write_upcase_table(struct mkfs_exfat_ctx *ctx)
     upcase_entry->checksum = htole32(checksum);
 
     /* Write entry to root directory */
-    char *root_cluster = calloc(1, ctx->cluster_size);
+    char *root_cluster = calloc(1, ctx->sectors_per_cluster * EXFAT_SECTOR_SIZE);
     if (root_cluster == NULL) {
         error = -1;
         goto out;
@@ -427,7 +426,7 @@ write_root_dir(struct mkfs_exfat_ctx *ctx)
     int error = 0;
 
     /* Allocate cluster buffer */
-    cluster = calloc(1, ctx->cluster_size);
+    cluster = calloc(1, ctx->sectors_per_cluster * EXFAT_SECTOR_SIZE);
     if (cluster == NULL) {
         warn("Cannot allocate cluster buffer");
         return -1;
@@ -454,7 +453,7 @@ write_root_dir(struct mkfs_exfat_ctx *ctx)
     /* Write upcase entry */
     es.file.type = EXFAT_ENTRY_UPCASE;
     es.stream.first_cluster = ctx->upcase_cluster;
-    es.stream.data_length = ctx->cluster_size;  /* One cluster for now */
+    es.stream.data_length = ctx->sectors_per_cluster;  /* One cluster for now */
     memcpy(cluster + 64, &es, sizeof(struct exfat_entry_file) +
                              sizeof(struct exfat_entry_stream));
 

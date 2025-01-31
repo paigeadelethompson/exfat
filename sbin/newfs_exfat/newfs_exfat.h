@@ -36,6 +36,14 @@
 #define EXFAT_VOL_DIRTY           0x0001
 #define EXFAT_VOL_ACTIVE_FAT      0x0002
 
+/* ExFAT file attributes */
+#define EXFAT_ATTR_READ_ONLY       0x0001
+#define EXFAT_ATTR_HIDDEN          0x0002
+#define EXFAT_ATTR_SYSTEM          0x0004
+#define EXFAT_ATTR_VOLUME          0x0008
+#define EXFAT_ATTR_DIRECTORY       0x0010
+#define EXFAT_ATTR_ARCHIVE         0x0020
+
 /* ExFAT filesystem parameters */
 struct exfat_boot_record {
     uint8_t  jump_boot[3];         /* Boot strap short or near jump */
@@ -65,11 +73,14 @@ struct exfat_boot_record {
 struct mkfs_exfat_ctx {
     const char *device;          /* Device name */
     int fd;                      /* Device file descriptor */
-    off_t dev_size;             /* Device size in bytes */
-    uint32_t cluster_size;      /* Cluster size in bytes */
+    uint64_t total_sectors;      /* Total sectors on device */
+    uint32_t bytes_per_sector;   /* Bytes per sector (usually 512) */
+    uint32_t sectors_per_cluster; /* Sectors per cluster */
+    uint32_t cluster_count;      /* Number of clusters */
+    uint32_t fat_sectors;        /* Sectors per FAT */
+    uint8_t number_of_fats;      /* Number of FATs (1 or 2) */
     struct exfat_boot_record boot;  /* Boot sector */
     uint32_t cluster_heap_offset; /* Offset to cluster heap */
-    uint32_t cluster_count;     /* Total number of clusters */
     uint32_t bitmap_cluster;    /* First cluster of bitmap */
     uint32_t upcase_cluster;    /* First cluster of upcase table */
     uint32_t root_cluster;      /* First cluster of root directory */
@@ -79,12 +90,74 @@ struct mkfs_exfat_ctx {
     int verbose;                /* Verbose output */
 };
 
+/* Directory entry structures */
+struct exfat_entry_file {
+    uint8_t  type;                 /* Entry type */
+    uint8_t  secondary_count;      /* Count of secondary entries */
+    uint16_t checksum;            /* Name hash */
+    uint16_t file_attributes;     /* File attributes */
+    uint16_t reserved1;
+    uint32_t create_timestamp;    /* Create timestamp */
+    uint32_t last_modified_timestamp; /* Last modified timestamp */
+    uint32_t last_access_timestamp;   /* Last access timestamp */
+    uint8_t  create_time_ms;      /* 10ms units */
+    uint8_t  last_modified_time_ms; /* 10ms units */
+    uint8_t  create_tz;           /* Timezone offset */
+    uint8_t  last_modified_tz;    /* Timezone offset */
+    uint8_t  last_access_tz;      /* Timezone offset */
+    uint8_t  reserved2[7];
+};
+
+struct exfat_entry_stream {
+    uint8_t  type;                /* Entry type */
+    uint8_t  flags;               /* Flags */
+    uint8_t  reserved1;
+    uint8_t  name_length;         /* Name length */
+    uint16_t name_hash;           /* Name hash */
+    uint16_t reserved2;
+    uint64_t valid_data_length;   /* Valid data length */
+    uint32_t reserved3;
+    uint32_t first_cluster;       /* First cluster */
+    uint64_t data_length;         /* Data length */
+};
+
+struct exfat_entry_name {
+    uint8_t  type;                /* Entry type */
+    uint8_t  reserved1;
+    uint16_t name[15];           /* UTF-16 characters */
+};
+
+struct exfat_direntry_set {
+    struct exfat_entry_file file;
+    struct exfat_entry_stream stream;
+    struct exfat_entry_name name[16];
+    int name_count;
+};
+
+struct exfat_entry_upcase {
+    uint8_t  type;                /* Entry type */
+    uint8_t  reserved1[3];
+    uint32_t checksum;           /* Table checksum */
+    uint8_t  reserved2[12];
+    uint32_t first_cluster;       /* First cluster */
+    uint64_t data_length;         /* Size of table in bytes */
+};
+
+struct exfat_entry_label {
+    uint8_t  type;                /* Entry type */
+    uint8_t  character_count;     /* Number of characters */
+    uint16_t unicode_label[11];   /* UTF-16 characters */
+    uint8_t  reserved[8];
+};
+
 /* Function prototypes */
 int write_boot_sector(struct mkfs_exfat_ctx *ctx);
 int write_fat(struct mkfs_exfat_ctx *ctx);
 int write_root_dir(struct mkfs_exfat_ctx *ctx);
 int write_bitmap(struct mkfs_exfat_ctx *ctx);
 int write_upcase_table(struct mkfs_exfat_ctx *ctx);
+void unix_time_to_exfat(const struct timespec *ts, uint32_t *date, uint32_t *time);
+int exfat_utf8_to_utf16(const char *utf8, uint16_t *utf16, size_t maxout, size_t *lenout);
 
 /* Default formatting parameters */
 #define EXFAT_DEFAULT_CLUSTER_SIZE   32768    /* 32KB */
