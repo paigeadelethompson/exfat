@@ -124,8 +124,8 @@ validate_device(const char *dev)
         return -1;
     }
 
-    if (!S_ISBLK(sb.st_mode) && !S_ISCHR(sb.st_mode)) {
-        warnx("%s is not a block or character device", dev);
+    if (!S_ISBLK(sb.st_mode) && !S_ISCHR(sb.st_mode) && !S_ISREG(sb.st_mode)) {
+        warnx("%s is not a block device, character device, or regular file", dev);
         return -1;
     }
 
