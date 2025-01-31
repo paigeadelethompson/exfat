@@ -310,19 +310,33 @@ write_fat(struct mkfs_exfat_ctx *ctx)
     fat[0] = 0xFFFFFFF8;  /* Media type */
     fat[1] = 0xFFFFFFFF;  /* EOC for cluster 1 */
     
-    /* Mark bitmap and upcase table clusters */
-    for (i = 0; i < ctx->boot.cluster_count && i < 128; i++) {
-        if (i == ctx->bitmap_cluster || 
-            (i >= ctx->upcase_cluster && 
-             i < ctx->upcase_cluster + (128 * 1024 + ctx->sectors_per_cluster * EXFAT_SECTOR_SIZE - 1) / 
-                                      (ctx->sectors_per_cluster * EXFAT_SECTOR_SIZE))) {
-            fat[i] = 0xFFFFFFFF;  /* EOC */
-        }
+    /* Mark bitmap cluster */
+    fat[ctx->bitmap_cluster] = 0xFFFFFFFF;  /* EOC */
+
+    /* Mark upcase table clusters */
+    uint32_t upcase_clusters = (128 * 1024 + ctx->sectors_per_cluster * EXFAT_SECTOR_SIZE - 1) / 
+                              (ctx->sectors_per_cluster * EXFAT_SECTOR_SIZE);
+    for (i = 0; i < upcase_clusters; i++) {
+        fat[ctx->upcase_cluster + i] = (i == upcase_clusters - 1) ? 
+                                      0xFFFFFFFF : /* EOC */
+                                      ctx->upcase_cluster + i + 1; /* Next cluster */
     }
+
+    /* Mark root directory cluster */
+    fat[ctx->root_cluster] = 0xFFFFFFFF;  /* EOC */
 
     if (write_sector(ctx, ctx->boot.fat_offset, fat_sector) < 0) {
         free(fat_sector);
         return -1;
+    }
+
+    /* Clear remaining FAT sectors */
+    memset(fat_sector, 0, ctx->bytes_per_sector);
+    for (i = 1; i < ctx->fat_sectors; i++) {
+        if (write_sector(ctx, ctx->boot.fat_offset + i, fat_sector) < 0) {
+            free(fat_sector);
+            return -1;
+        }
     }
 
     free(fat_sector);
@@ -377,15 +391,20 @@ write_bitmap(struct mkfs_exfat_ctx *ctx)
     upcase_clusters = (128 * 1024 + ctx->sectors_per_cluster * EXFAT_SECTOR_SIZE - 1) / 
                      (ctx->sectors_per_cluster * EXFAT_SECTOR_SIZE);
 
-    /* Mark clusters as used */
-    bitmap[0] = 0x03;  /* First two clusters are reserved */
-    bitmap[ctx->bitmap_cluster / 8] |= 1 << (ctx->bitmap_cluster % 8);  /* Bitmap cluster */
+    /* Mark first two clusters as reserved */
+    bitmap[0] = 0x03;
+
+    /* Mark bitmap cluster as used */
+    bitmap[ctx->bitmap_cluster / 8] |= 1 << (ctx->bitmap_cluster % 8);
     
     /* Mark upcase table clusters */
     for (i = 0; i < upcase_clusters; i++) {
         uint32_t cluster = ctx->upcase_cluster + i;
         bitmap[cluster / 8] |= 1 << (cluster % 8);
     }
+
+    /* Mark root directory cluster */
+    bitmap[ctx->root_cluster / 8] |= 1 << (ctx->root_cluster % 8);
 
     /* Write bitmap */
     if (lseek(ctx->fd, ctx->bytes_per_sector * 
