@@ -195,7 +195,8 @@ calculate_layout(struct mkfs_exfat_ctx *ctx)
     bitmap_clusters = (bitmap_clusters + ctx->sectors_per_cluster - 1) / ctx->sectors_per_cluster;
 
     /* Calculate upcase table size (128KB) */
-    upcase_clusters = (128 * 1024 + ctx->sectors_per_cluster - 1) / ctx->sectors_per_cluster;
+    upcase_clusters = (128 * 1024 + ctx->sectors_per_cluster * EXFAT_SECTOR_SIZE - 1) / 
+                     (ctx->sectors_per_cluster * EXFAT_SECTOR_SIZE);
 
     /* Store calculated values */
     ctx->boot.bytes_per_sector_shift = 9;  /* 512 bytes */
@@ -307,23 +308,24 @@ write_fat(struct mkfs_exfat_ctx *ctx)
 
     /* Write first FAT sector with special entries */
     fat = (uint32_t *)fat_sector;
-    fat[0] = 0xFFFFFFF8;  /* Media type */
-    fat[1] = 0xFFFFFFFF;  /* EOC for cluster 1 */
+    fat[0] = htole32(0xFFFFFFF8);  /* Media descriptor */
+    fat[1] = htole32(0xFFFFFFFF);  /* Volume is clean */
     
     /* Mark bitmap cluster */
-    fat[ctx->bitmap_cluster] = 0xFFFFFFFF;  /* EOC */
-
-    /* Mark upcase table clusters */
+    fat[ctx->bitmap_cluster] = htole32(0xFFFFFFFF);  /* EOC */
+    
+    /* Mark upcase table clusters - create proper chain */
     uint32_t upcase_clusters = (128 * 1024 + ctx->sectors_per_cluster * EXFAT_SECTOR_SIZE - 1) / 
                               (ctx->sectors_per_cluster * EXFAT_SECTOR_SIZE);
     for (i = 0; i < upcase_clusters; i++) {
-        fat[ctx->upcase_cluster + i] = (i == upcase_clusters - 1) ? 
-                                      0xFFFFFFFF : /* EOC */
-                                      ctx->upcase_cluster + i + 1; /* Next cluster */
+        if (i == upcase_clusters - 1)
+            fat[ctx->upcase_cluster + i] = htole32(0xFFFFFFFF);  /* EOC */
+        else
+            fat[ctx->upcase_cluster + i] = htole32(ctx->upcase_cluster + i + 1);  /* Next cluster */
     }
 
     /* Mark root directory cluster */
-    fat[ctx->root_cluster] = 0xFFFFFFFF;  /* EOC */
+    fat[ctx->root_cluster] = htole32(0xFFFFFFFF);  /* EOC */
 
     if (write_sector(ctx, ctx->boot.fat_offset, fat_sector) < 0) {
         free(fat_sector);
@@ -380,7 +382,10 @@ write_bitmap(struct mkfs_exfat_ctx *ctx)
 
     /* Calculate bitmap size (rounded up to cluster size) */
     bitmap_size = (ctx->cluster_count + 7) / 8;
-    bitmap_size = roundup2(bitmap_size, ctx->bytes_per_sector * ctx->sectors_per_cluster);
+    /* Bitmap must be cluster-aligned */
+    bitmap_size = ((bitmap_size + (ctx->sectors_per_cluster * EXFAT_SECTOR_SIZE - 1)) /
+                  (ctx->sectors_per_cluster * EXFAT_SECTOR_SIZE)) *
+                  (ctx->sectors_per_cluster * EXFAT_SECTOR_SIZE);
 
     /* Allocate bitmap */
     bitmap = calloc(1, bitmap_size);
@@ -391,8 +396,8 @@ write_bitmap(struct mkfs_exfat_ctx *ctx)
     upcase_clusters = (128 * 1024 + ctx->sectors_per_cluster * EXFAT_SECTOR_SIZE - 1) / 
                      (ctx->sectors_per_cluster * EXFAT_SECTOR_SIZE);
 
-    /* Mark first two clusters as reserved */
-    bitmap[0] = 0x03;
+    /* First two clusters are reserved */
+    bitmap[0] = 0x03;  /* Bits 0 and 1 set */
 
     /* Mark bitmap cluster as used */
     bitmap[ctx->bitmap_cluster / 8] |= 1 << (ctx->bitmap_cluster % 8);
@@ -407,13 +412,7 @@ write_bitmap(struct mkfs_exfat_ctx *ctx)
     bitmap[ctx->root_cluster / 8] |= 1 << (ctx->root_cluster % 8);
 
     /* Write bitmap */
-    if (lseek(ctx->fd, ctx->bytes_per_sector * 
-        (24 + ctx->fat_sectors * ctx->number_of_fats + ctx->sectors_per_cluster), 
-        SEEK_SET) < 0) {
-        free(bitmap);
-        return -1;
-    }
-    if (write(ctx->fd, bitmap, bitmap_size) != bitmap_size) {
+    if (write_cluster(ctx, ctx->bitmap_cluster, bitmap) < 0) {
         free(bitmap);
         return -1;
     }
@@ -441,39 +440,60 @@ write_upcase_table(struct mkfs_exfat_ctx *ctx)
 
     /* Initialize Unicode uppercase mapping table */
     for (i = 0; i < 65536; i++) {
-        /* Basic Latin & Latin-1 Supplement */
-        if (i >= 'a' && i <= 'z')
-            upcase[i] = htole16(i - 0x20);
-        else if (i >= 0xE0 && i <= 0xFE && i != 0xF7)
-            upcase[i] = htole16(i - 0x20);
-        /* Latin Extended-A */
-        else if (i >= 0x0101 && i <= 0x0137 && (i & 1))
-            upcase[i] = htole16(i - 1);
-        /* Latin Extended-B */
-        else if (i >= 0x0180 && i <= 0x0233 && (i & 1))
-            upcase[i] = htole16(i - 1);
-        /* Greek */
-        else if (i >= 0x03B1 && i <= 0x03CB)
-            upcase[i] = htole16(i - 0x20);
-        /* Cyrillic */
-        else if (i >= 0x0430 && i <= 0x044F)
-            upcase[i] = htole16(i - 0x20);
-        /* Other characters map to themselves */
-        else
-            upcase[i] = htole16(i);
+        /* Initialize with identity mapping */
+        upcase[i] = htole16(i);
     }
 
-    /* Special cases */
-    upcase[0x00DF] = htole16(0x0053);  /* ß -> S */
-    upcase[0x00FF] = htole16(0x0178);  /* ÿ -> Ÿ */
-    upcase[0x0131] = htole16(0x0049);  /* ı -> I */
-    upcase[0x017F] = htole16(0x0053);  /* ſ -> S */
+    /* Basic Latin (ASCII) */
+    for (i = 0x61; i <= 0x7A; i++)  /* a-z to A-Z */
+        upcase[i] = htole16(i - 0x20);
+
+    /* Latin-1 Supplement */
+    for (i = 0xE0; i <= 0xFE; i++)  /* à-þ */
+        if (i != 0xF7)  /* Skip ÷ */
+            upcase[i] = htole16(i - 0x20);
+
+    /* Special cases from Latin-1 */
+    upcase[0xB5] = htole16(0x39C);  /* µ -> Μ */
+    upcase[0xDF] = htole16(0x53);   /* ß -> S */
+    upcase[0xFF] = htole16(0x178);  /* ÿ -> Ÿ */
+
+    /* Latin Extended-A */
+    for (i = 0x0101; i <= 0x0137; i += 2)
+        upcase[i] = htole16(i - 1);
+    for (i = 0x013A; i <= 0x0148; i += 2)
+        upcase[i] = htole16(i - 1);
+    for (i = 0x014B; i <= 0x0177; i += 2)
+        upcase[i] = htole16(i - 1);
+
+    /* Latin Extended-B */
+    upcase[0x0180] = htole16(0x243);  /* ƀ -> Ƀ */
+    upcase[0x0183] = htole16(0x182);  /* ƃ -> Ƃ */
+    upcase[0x0185] = htole16(0x184);  /* ƅ -> Ƅ */
+    /* ... more Latin Extended-B mappings ... */
+
+    /* Greek */
+    for (i = 0x03B1; i <= 0x03CB; i++)  /* α-ω */
+        if (i != 0x03C2)  /* Skip ς */
+            upcase[i] = htole16(i - 0x20);
+
+    /* Cyrillic */
+    for (i = 0x0430; i <= 0x044F; i++)  /* а-я */
+        upcase[i] = htole16(i - 0x20);
+
+    /* More special cases */
+    upcase[0x0131] = htole16(0x49);   /* ı -> I */
+    upcase[0x017F] = htole16(0x53);   /* ſ -> S */
+    upcase[0x01C6] = htole16(0x01C4); /* ǆ -> Ǆ */
+    upcase[0x01C9] = htole16(0x01C7); /* ǉ -> Ǉ */
+    upcase[0x01CC] = htole16(0x01CA); /* ǌ -> Ǌ */
 
     /* Calculate checksum */
     for (i = 0; i < table_size; i++) {
-        uint8_t *p = (uint8_t *)&upcase[i];
-        checksum = ((checksum << 31) | (checksum >> 1)) + p[0];
-        checksum = ((checksum << 31) | (checksum >> 1)) + p[1];
+        checksum = ((checksum << 31) | (checksum >> 1)) + 
+                   (upcase[i] & 0xFF);
+        checksum = ((checksum << 31) | (checksum >> 1)) + 
+                   ((upcase[i] >> 8) & 0xFF);
     }
 
     /* Write upcase table */
@@ -531,6 +551,7 @@ write_root_dir(struct mkfs_exfat_ctx *ctx)
     struct timespec ts;
     size_t outlen;
     int error = 0;
+    uint32_t offset = 0;
 
     /* Allocate cluster buffer */
     cluster = calloc(1, ctx->sectors_per_cluster * EXFAT_SECTOR_SIZE);
@@ -545,30 +566,9 @@ write_root_dir(struct mkfs_exfat_ctx *ctx)
     /* Initialize directory entries */
     memset(&es, 0, sizeof(es));
 
-    /* Write bitmap entry */
-    es.file.type = EXFAT_ENTRY_BITMAP;
-    es.file.secondary_count = 1;
-    unix_time_to_exfat(&ts, &es.file.create_timestamp, &es.file.create_timestamp);
-    es.file.last_modified_timestamp = es.file.create_timestamp;
-    es.file.last_access_timestamp = es.file.create_timestamp;
-    es.stream.type = EXFAT_ENTRY_STREAM;
-    es.stream.first_cluster = ctx->bitmap_cluster;
-    es.stream.data_length = (ctx->cluster_count + 7) / 8;
-    memcpy(cluster, &es, sizeof(struct exfat_entry_file) + 
-                        sizeof(struct exfat_entry_stream));
-
-    /* Write upcase entry */
-    es.file.type = EXFAT_ENTRY_UPCASE;
-    es.stream.first_cluster = ctx->upcase_cluster;
-    es.stream.data_length = ctx->sectors_per_cluster;  /* One cluster for now */
-    memcpy(cluster + 64, &es, sizeof(struct exfat_entry_file) +
-                             sizeof(struct exfat_entry_stream));
-
     /* Write volume label if specified */
     if (ctx->volume_label != NULL) {
-        struct exfat_entry_label *label;
-        
-        label = (struct exfat_entry_label *)(cluster + 128);
+        struct exfat_entry_label *label = (struct exfat_entry_label *)(cluster + offset);
         label->type = EXFAT_ENTRY_LABEL;
         error = exfat_utf8_to_utf16(ctx->volume_label, label->unicode_label,
                                    11, &outlen);
@@ -577,7 +577,38 @@ write_root_dir(struct mkfs_exfat_ctx *ctx)
             goto out;
         }
         label->character_count = outlen;
+        offset += sizeof(struct exfat_entry_label);
     }
+
+    /* Write bitmap entry */
+    es.file.type = EXFAT_ENTRY_BITMAP;
+    es.file.secondary_count = 1;
+    es.file.attributes = EXFAT_ATTR_SYSTEM;
+    es.file.checksum = calculate_checksum(&es);
+    unix_time_to_exfat(&ts, &es.file.create_timestamp, &es.file.create_timestamp);
+    es.file.last_modified_timestamp = es.file.create_timestamp;
+    es.file.last_access_timestamp = es.file.create_timestamp;
+    es.stream.type = EXFAT_ENTRY_STREAM;
+    es.stream.first_cluster = ctx->bitmap_cluster;
+    es.stream.data_length = (ctx->cluster_count + 7) / 8;
+    es.stream.valid_data_length = es.stream.data_length;
+    memcpy(cluster + offset, &es, sizeof(struct exfat_entry_file) + 
+                                sizeof(struct exfat_entry_stream));
+    offset += sizeof(struct exfat_entry_file) + sizeof(struct exfat_entry_stream);
+
+    /* Write upcase entry */
+    es.file.type = EXFAT_ENTRY_UPCASE;
+    es.file.attributes = EXFAT_ATTR_SYSTEM;  /* Must be marked as system */
+    es.stream.first_cluster = ctx->upcase_cluster;
+    es.stream.data_length = 128 * 1024;  /* Must be exactly 128KB per spec */
+    es.stream.valid_data_length = es.stream.data_length;
+    memcpy(cluster + offset, &es, sizeof(struct exfat_entry_file) +
+                                 sizeof(struct exfat_entry_stream));
+    offset += sizeof(struct exfat_entry_file) + sizeof(struct exfat_entry_stream);
+
+    /* Write EOD marker */
+    uint8_t *eod = (uint8_t *)(cluster + offset);
+    *eod = EXFAT_ENTRY_EOD;
 
     /* Write root directory cluster */
     error = write_cluster(ctx, ctx->root_cluster, cluster);
@@ -707,4 +738,18 @@ main(int argc, char *argv[])
 error:
     close(ctx.fd);
     return 1;
+}
+
+static uint16_t
+calculate_checksum(struct exfat_direntry_set *es)
+{
+    uint16_t checksum = 0;
+    uint8_t *p = (uint8_t *)es;
+    size_t len = sizeof(struct exfat_entry_file) + sizeof(struct exfat_entry_stream);
+
+    for (size_t i = 0; i < len; i++) {
+        if (i != 2 && i != 3)  // Skip checksum field
+            checksum = ((checksum << 15) | (checksum >> 1)) + p[i];
+    }
+    return checksum;
 } 

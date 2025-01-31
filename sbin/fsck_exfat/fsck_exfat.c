@@ -26,6 +26,8 @@
 #include <string.h>
 #include <unistd.h>
 #include <time.h>
+#include <sys/endian.h>
+#include <inttypes.h>
 
 #include "fsck_exfat.h"
 
@@ -33,6 +35,32 @@
 #define MAX_CLUSTERS 0xFFFFFFF5  /* Maximum valid cluster number */
 
 /* Add cluster tracking structure */
+#define EXFAT_CLUSTER_FREE     0x00000000
+#define EXFAT_CLUSTER_BAD      0xFFFFFFF7
+#define EXFAT_CLUSTER_END      0xFFFFFFFF
+
+/* Directory entry types */
+#define EXFAT_TYPE_EOD         0x00
+#define EXFAT_TYPE_DELETED     0xE5
+#define EXFAT_TYPE_LABEL       0x83
+#define EXFAT_TYPE_BITMAP      0x81
+#define EXFAT_TYPE_UPCASE      0x82
+#define EXFAT_TYPE_FILE        0x85
+#define EXFAT_TYPE_STREAM      0xC0
+#define EXFAT_TYPE_NAME        0xC1
+
+/* File attributes */
+#define EXFAT_ATTR_READ_ONLY   0x0001
+#define EXFAT_ATTR_HIDDEN      0x0002
+#define EXFAT_ATTR_SYSTEM      0x0004
+#define EXFAT_ATTR_VOLUME_ID   0x0008
+#define EXFAT_ATTR_DIRECTORY   0x0010
+#define EXFAT_ATTR_ARCHIVE     0x0020
+
+/* Required sizes */
+#define EXFAT_UPCASE_SIZE      (128 * 1024)  /* 128KB */
+#define EXFAT_SECTOR_SIZE      512
+
 struct cluster_info {
     uint32_t refs;      /* Reference count */
     uint32_t owner;     /* First cluster of file/dir that owns this cluster */
@@ -139,100 +167,122 @@ write_fat_sector(struct fsck_exfat_ctx *ctx, off_t sector, uint32_t *buffer)
 int
 check_boot_sector(struct fsck_exfat_ctx *ctx)
 {
-    struct exfat_boot_record boot;
-    uint8_t *sector = (uint8_t *)&boot;
+    struct exfat_boot_record *boot = &ctx->emp->boot;
+    uint8_t *sector = (uint8_t *)boot;
     int i;
 
     /* Read boot sector */
-    if (read_sector(ctx, 0, &boot) < 0)
+    if (read_sector(ctx, 0, boot) < 0)
         return -1;
 
-    /* Check jump instruction */
-    if (boot.jump_boot[0] != 0xEB || boot.jump_boot[2] != 0x90) {
+    /* Per ExFAT spec:
+     * - Jump boot must be EB 76 90
+     * - FileSystem Name must be "EXFAT   "
+     * - Must be zero field must be all zeros
+     * - Bytes per sector must be power of 2 between 512-4096
+     * - Sectors per cluster must be power of 2
+     * - Number of FATs must be 1 (TexFAT not supported)
+     * - Volume length must be valid
+     * - FAT offset/length must be valid
+     * - Cluster heap offset must be after FAT
+     */
+
+    /* Check jump boot instruction */
+    if (boot->jump_boot[0] != 0xEB ||
+        boot->jump_boot[1] != 0x76 ||
+        boot->jump_boot[2] != 0x90) {
         report_error(ctx, FSCK_ERR_FATAL,
-            "Invalid jump instruction in boot sector");
+            "Invalid jump boot instruction");
         return -1;
     }
 
     /* Check filesystem name */
-    if (memcmp(boot.fs_name, "EXFAT   ", 8) != 0) {
+    if (memcmp(boot->fs_name, "EXFAT   ", 8) != 0) {
         report_error(ctx, FSCK_ERR_FATAL,
-            "Invalid filesystem name in boot sector");
+            "Invalid filesystem name");
         return -1;
     }
 
     /* Check must_be_zero field */
     for (i = 0; i < 53; i++) {
-        if (boot.must_be_zero[i] != 0) {
+        if (boot->must_be_zero[i] != 0) {
             report_error(ctx, FSCK_ERR_SERIOUS,
                 "Non-zero value in reserved field");
             if (ctx->fix_errors) {
-                boot.must_be_zero[i] = 0;
+                boot->must_be_zero[i] = 0;
                 ctx->modified = 1;
             }
         }
     }
 
     /* Check bytes per sector (must be power of 2, 512-4096) */
-    uint32_t bytes_per_sector = 1 << boot.bytes_per_sector_shift;
-    if (boot.bytes_per_sector_shift < 9 || boot.bytes_per_sector_shift > 12) {
+    uint32_t bytes_per_sector = 1 << boot->bytes_per_sector_shift;
+    if (boot->bytes_per_sector_shift < 9 || boot->bytes_per_sector_shift > 12) {
         report_error(ctx, FSCK_ERR_FATAL,
             "Invalid bytes per sector: %u", bytes_per_sector);
         return -1;
     }
 
     /* Check sectors per cluster (must be power of 2) */
-    if (boot.sectors_per_cluster_shift > 25 - boot.bytes_per_sector_shift) {
+    if (boot->sectors_per_cluster_shift > 25 - boot->bytes_per_sector_shift) {
         report_error(ctx, FSCK_ERR_FATAL,
             "Invalid sectors per cluster: %u",
-            1 << boot.sectors_per_cluster_shift);
+            1 << boot->sectors_per_cluster_shift);
         return -1;
     }
 
     /* Check number of FATs (must be 1 or 2) */
-    if (boot.number_of_fats < 1 || boot.number_of_fats > 2) {
+    if (boot->number_of_fats < 1 || boot->number_of_fats > 2) {
         report_error(ctx, FSCK_ERR_FATAL,
-            "Invalid number of FATs: %u", boot.number_of_fats);
+            "Invalid number of FATs: %u", boot->number_of_fats);
         return -1;
     }
 
     /* Check volume length */
-    if (boot.volume_length == 0) {
+    if (boot->volume_length == 0) {
         report_error(ctx, FSCK_ERR_FATAL, "Volume length is zero");
         return -1;
     }
 
     /* Check FAT offset and length */
-    if (boot.fat_offset == 0 || boot.fat_length == 0) {
+    if (boot->fat_offset == 0 || boot->fat_length == 0) {
         report_error(ctx, FSCK_ERR_FATAL,
             "Invalid FAT offset/length: %u/%u",
-            boot.fat_offset, boot.fat_length);
+            boot->fat_offset, boot->fat_length);
         return -1;
     }
 
     /* Check cluster heap offset */
-    if (boot.cluster_heap_offset < boot.fat_offset + boot.fat_length) {
+    if (boot->cluster_heap_offset < boot->fat_offset + boot->fat_length) {
         report_error(ctx, FSCK_ERR_FATAL,
             "Cluster heap overlaps with FAT");
         return -1;
     }
 
     /* Check cluster count */
-    if (boot.cluster_count == 0) {
+    if (boot->cluster_count == 0) {
         report_error(ctx, FSCK_ERR_FATAL, "Cluster count is zero");
         return -1;
     }
 
     /* Check root directory cluster */
-    if (boot.root_dir_cluster < 2 ||
-        boot.root_dir_cluster >= boot.cluster_count + 2) {
+    if (boot->root_dir_cluster < 2 ||
+        boot->root_dir_cluster >= boot->cluster_count + 2) {
         report_error(ctx, FSCK_ERR_FATAL,
-            "Invalid root directory cluster: %u", boot.root_dir_cluster);
+            "Invalid root directory cluster: %u", boot->root_dir_cluster);
+        return -1;
+    }
+
+    /* Verify volume layout */
+    uint64_t min_size = boot->fat_offset + boot->fat_length +
+                        boot->cluster_heap_offset;
+    if (boot->volume_length < min_size) {
+        report_error(ctx, FSCK_ERR_FATAL, "Volume length too small for filesystem structures");
         return -1;
     }
 
     /* Store boot sector in context */
-    memcpy(&ctx->emp->boot, &boot, sizeof(boot));
+    memcpy(&ctx->emp->boot, boot, sizeof(struct exfat_boot_record));
 
     return 0;
 }
@@ -245,12 +295,35 @@ check_fat(struct fsck_exfat_ctx *ctx)
     uint32_t entries_per_sector = EXFAT_SECTOR_SIZE / sizeof(uint32_t);
     uint32_t sector, i;
     int error = 0;
+    uint32_t entry0, entry1;
 
     /* Allocate buffer for one FAT sector */
     fat_sector = malloc(EXFAT_SECTOR_SIZE);
     if (fat_sector == NULL) {
         report_error(ctx, FSCK_ERR_FATAL, "Cannot allocate FAT sector buffer");
         return -1;
+    }
+
+    /* Read first FAT sector to check special entries */
+    error = read_fat_sector(ctx, 0, fat_sector);
+    if (error)
+        goto out;
+
+    entry0 = le32toh(fat_sector[0]);
+    entry1 = le32toh(fat_sector[1]);
+
+    /* Check media descriptor (must be 0xFFFFFFF8) */
+    if (entry0 != 0xFFFFFFF8) {
+        report_error(ctx, FSCK_ERR_FATAL,
+            "Invalid media descriptor in FAT: %08x", entry0);
+        error = -1;
+        goto out;
+    }
+
+    /* Check volume state (must be 0xFFFFFFFF for clean) */
+    if (entry1 != 0xFFFFFFFF && entry1 != 0xFFFFFFFE) {
+        report_error(ctx, FSCK_ERR_FATAL,
+            "Invalid volume state in FAT: %08x", entry1);
     }
 
     /* Check each FAT sector */
@@ -268,19 +341,29 @@ check_fat(struct fsck_exfat_ctx *ctx)
             if (cluster >= total_clusters)
                 continue;
 
-            /* Check for valid cluster values */
-            if (entry != EXFAT_CLUSTER_FREE &&
-                entry != EXFAT_CLUSTER_BAD &&
-                entry != EXFAT_CLUSTER_END &&
-                (entry < 2 || entry >= total_clusters + 2)) {
-                report_error(ctx, FSCK_ERR_NORMAL,
+            /* Per ExFAT spec, valid values are:
+             * 0x00000000: Free cluster
+             * 0x00000002-0xFFFFFFF6: Next cluster in chain
+             * 0xFFFFFFF7: Bad cluster
+             * 0xFFFFFFF8-0xFFFFFFFF: End of chain (EOC)
+             */
+            if (entry != 0 && entry < 2 && entry != 0xFFFFFFF7 &&
+                (entry < 0xFFFFFFF8 && entry > total_clusters + 1)) {
+                report_error(ctx, FSCK_ERR_SERIOUS,
                     "Invalid cluster value %u in FAT entry %u",
                     entry, cluster + 2);
                 if (ctx->fix_errors) {
-                    /* Mark as free if invalid */
                     fat_sector[i] = htole32(EXFAT_CLUSTER_FREE);
                     ctx->modified = 1;
                 }
+                error = -1;
+            }
+
+            /* Check for clusters beyond volume */
+            if (entry >= ctx->emp->boot.cluster_count + 2 && entry != EXFAT_CLUSTER_END) {
+                report_error(ctx, FSCK_ERR_SERIOUS,
+                    "FAT entry %u points beyond end of volume", cluster + 2);
+                error = -1;
             }
         }
 
@@ -459,6 +542,16 @@ check_direntry_set(struct fsck_exfat_ctx *ctx, struct exfat_direntry_set *es)
 {
     uint16_t checksum;
     int i;
+
+    /* Check system file attributes */
+    if (es->file.type == EXFAT_ENTRY_BITMAP ||
+        es->file.type == EXFAT_ENTRY_UPCASE) {
+        if (!(es->file.attributes & EXFAT_ATTR_SYSTEM)) {
+            report_error(ctx, FSCK_ERR_NORMAL,
+                "System file missing SYSTEM attribute");
+            return -1;
+        }
+    }
 
     /* Check file entry type */
     if (es->file.type != EXFAT_ENTRY_FILE) {
@@ -768,7 +861,7 @@ check_directory(struct fsck_exfat_ctx *ctx, uint32_t cluster)
                     goto out;
                 }
                 memcpy(&es.stream, entry, sizeof(es.stream));
-                entry += sizeof(es.stream);
+                entry += sizeof(es.stream));
 
                 /* Read name entries */
                 es.name_count = (es.stream.name_length + 14) / 15;
@@ -779,7 +872,7 @@ check_directory(struct fsck_exfat_ctx *ctx, uint32_t cluster)
                         goto out;
                     }
                     memcpy(&es.name[i], entry, sizeof(es.name[i]));
-                    entry += sizeof(es.name[i]);
+                    entry += sizeof(es.name[i]));
                 }
 
                 /* Check directory entry set */
@@ -827,7 +920,93 @@ out:
 int
 check_root_dir(struct fsck_exfat_ctx *ctx)
 {
-    return check_directory(ctx, ctx->emp->boot.root_dir_cluster);
+    uint32_t cluster = ctx->emp->boot.root_dir_cluster;
+    uint8_t *buffer;
+    size_t size;
+    uint32_t offset = 0;
+    int found_bitmap = 0;
+    int found_upcase = 0;
+    int found_label = 0;
+
+    /* Allocate buffer for root directory cluster */
+    buffer = malloc(EXFAT_SECTOR_SIZE);
+    if (buffer == NULL) {
+        report_error(ctx, FSCK_ERR_FATAL, "Cannot allocate root directory buffer");
+        return -1;
+    }
+
+    /* Read root directory cluster */
+    if (read_cluster(ctx, cluster, buffer) < 0) {
+        free(buffer);
+        return -1;
+    }
+
+    /* Per ExFAT spec, root directory must contain:
+     * 1. Volume Label (optional)
+     * 2. Allocation Bitmap (required)
+     * 3. Upcase Table (required)
+     * 4. Regular files/directories
+     * 5. EOD marker
+     * All system files must have SYSTEM attribute set
+     */
+
+    while (offset < EXFAT_SECTOR_SIZE) {
+        uint8_t entry_type = buffer[offset];
+
+        if (entry_type == EXFAT_ENTRY_EOD) {
+            break;
+
+        /* Check entry type */
+        if (entry_type == EXFAT_TYPE_LABEL) {
+            if (found_bitmap || found_upcase) {
+                report_error(ctx, FSCK_ERR_NORMAL,
+                    "Volume label must come before bitmap and upcase entries");
+                free(buffer);
+                return -1;
+            }
+            if (found_label) {
+                report_error(ctx, FSCK_ERR_NORMAL,
+                    "Multiple volume label entries found");
+                return -1;
+            }
+            found_label = 1;
+        } else if (entry_type == EXFAT_TYPE_BITMAP) {
+            if (found_bitmap) {
+                report_error(ctx, FSCK_ERR_NORMAL,
+                    "Multiple allocation bitmap entries found");
+                free(buffer);
+                return -1;
+            }
+            found_bitmap = 1;
+        } else if (entry_type == EXFAT_TYPE_UPCASE) {
+            if (found_upcase) {
+                report_error(ctx, FSCK_ERR_NORMAL,
+                    "Multiple upcase table entries found");
+                free(buffer);
+                return -1;
+            }
+            found_upcase = 1;
+        } else if (entry_type == EXFAT_ENTRY_FILE) {
+            /* Skip file entry */
+            offset += sizeof(struct exfat_entry_file);
+        } else {
+            report_error(ctx, FSCK_ERR_NORMAL, "Invalid root directory entry type: %02x", entry_type);
+            free(buffer);
+            return -1;
+        }
+    }
+
+    /* Check directory contents */
+    error = check_directory(ctx, cluster);
+    if (error)
+        goto out;
+
+    free(buffer);
+    return error;
+
+out:
+    free(buffer);
+    return error;
 }
 
 static int
