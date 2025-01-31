@@ -27,8 +27,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "mkfs_exfat.h"
-#include "exfat.h"
+#include "newfs_exfat.h"
 
 static void
 usage(void)

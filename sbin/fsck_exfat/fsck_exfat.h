@@ -52,4 +52,144 @@ int check_file(struct fsck_exfat_ctx *ctx, struct exfat_direntry_set *es);
 int check_cluster_chain(struct fsck_exfat_ctx *ctx, uint32_t start_cluster);
 void report_error(struct fsck_exfat_ctx *ctx, int level, const char *fmt, ...);
 
+#ifndef _FSCK_EXFAT_EXFAT_H_
+#define _FSCK_EXFAT_EXFAT_H_
+
+
+/* ExFAT filesystem constants */
+#define EXFAT_SECTOR_SIZE          512
+#define EXFAT_SECTOR_BITS          9
+#define EXFAT_MAX_NAMELEN          255
+#define EXFAT_LABEL_MAX_LEN        11
+
+/* ExFAT cluster status */
+#define EXFAT_CLUSTER_FREE         0x00000000
+#define EXFAT_CLUSTER_BAD          0xFFFFFFF7
+#define EXFAT_CLUSTER_END          0xFFFFFFFF
+
+/* ExFAT directory entry types */
+#define EXFAT_ENTRY_EOD            0x00
+#define EXFAT_ENTRY_BITMAP         0x81
+#define EXFAT_ENTRY_UPCASE         0x82
+#define EXFAT_ENTRY_LABEL          0x83
+#define EXFAT_ENTRY_FILE           0x85
+#define EXFAT_ENTRY_STREAM         0xC0
+#define EXFAT_ENTRY_NAME           0xC1
+
+/* ExFAT file attributes */
+#define EXFAT_ATTR_READ_ONLY       0x0001
+#define EXFAT_ATTR_HIDDEN          0x0002
+#define EXFAT_ATTR_SYSTEM          0x0004
+#define EXFAT_ATTR_VOLUME          0x0008
+#define EXFAT_ATTR_DIRECTORY       0x0010
+#define EXFAT_ATTR_ARCHIVE         0x0020
+
+/* ExFAT boot sector constants */
+#define EXFAT_BOOT_SIGNATURE       0xAA55
+#define EXFAT_BOOT_CODE_SIZE       390
+#define EXFAT_BOOT_REGION_SIZE     24  /* sectors */
+
+/* ExFAT volume flags */
+#define EXFAT_VOL_DIRTY           0x0001
+#define EXFAT_VOL_ACTIVE_FAT      0x0002
+
+/* ExFAT filesystem parameters */
+struct exfat_boot_record {
+    uint8_t  jump_boot[3];         /* Boot strap short or near jump */
+    uint8_t  fs_name[8];           /* "EXFAT   " */
+    uint8_t  must_be_zero[53];     /* Zero field */
+    uint64_t partition_offset;      /* Partition offset in sectors */
+    uint64_t volume_length;        /* Volume length in sectors */
+    uint32_t fat_offset;           /* FAT offset in sectors */
+    uint32_t fat_length;           /* FAT length in sectors */
+    uint32_t cluster_heap_offset;  /* Cluster heap offset in sectors */
+    uint32_t cluster_count;        /* Total number of clusters */
+    uint32_t root_dir_cluster;     /* First cluster of root directory */
+    uint32_t volume_serial;        /* Volume serial number */
+    uint16_t fs_revision;          /* Filesystem revision */
+    uint16_t volume_flags;         /* Volume flags */
+    uint8_t  bytes_per_sector_shift;  /* Bytes per sector shift */
+    uint8_t  sectors_per_cluster_shift; /* Sectors per cluster shift */
+    uint8_t  number_of_fats;       /* Number of FATs */
+    uint8_t  drive_select;         /* Drive select */
+    uint8_t  percent_in_use;       /* Percentage of clusters in use */
+    uint8_t  reserved[7];          /* Reserved */
+    uint8_t  boot_code[EXFAT_BOOT_CODE_SIZE];  /* Boot code */
+    uint16_t boot_signature;       /* Boot signature */
+};
+
+/* Directory entry structures */
+struct exfat_entry_file {
+    uint8_t  type;                 /* Entry type */
+    uint8_t  secondary_count;      /* Count of secondary entries */
+    uint16_t checksum;            /* Name hash */
+    uint16_t file_attributes;     /* File attributes */
+    uint16_t reserved1;
+    uint32_t create_timestamp;    /* Create timestamp */
+    uint32_t last_modified_timestamp; /* Last modified timestamp */
+    uint32_t last_access_timestamp;   /* Last access timestamp */
+    uint8_t  create_time_ms;      /* 10ms units */
+    uint8_t  last_modified_time_ms; /* 10ms units */
+    uint8_t  create_tz;           /* Timezone offset */
+    uint8_t  last_modified_tz;    /* Timezone offset */
+    uint8_t  last_access_tz;      /* Timezone offset */
+    uint8_t  reserved2[7];
+};
+
+struct exfat_entry_stream {
+    uint8_t  type;                /* Entry type */
+    uint8_t  flags;               /* Flags */
+    uint8_t  reserved1;
+    uint8_t  name_length;         /* Name length */
+    uint16_t name_hash;           /* Name hash */
+    uint16_t reserved2;
+    uint64_t valid_data_length;   /* Valid data length */
+    uint32_t reserved3;
+    uint32_t first_cluster;       /* First cluster */
+    uint64_t data_length;         /* Data length */
+};
+
+/* Directory entry size */
+#define EXFAT_ENTRY_SIZE          32
+
+/* Maximum number of directory entries */
+#define EXFAT_MAX_DIR_ENTRIES     65536
+
+/* Maximum number of secondary entries */
+#define EXFAT_MAX_SECONDARY       17   /* 1 stream + 16 name entries */
+
+/* Name entry */
+struct exfat_entry_name {
+    uint8_t  type;                /* Entry type */
+    uint8_t  reserved1;
+    uint16_t name[15];           /* UTF-16 characters */
+};
+
+/* Bitmap entry */
+struct exfat_entry_bitmap {
+    uint8_t  type;                /* Entry type */
+    uint8_t  flags;               /* Flags */
+    uint8_t  reserved[18];
+    uint32_t first_cluster;       /* First cluster of bitmap */
+    uint64_t data_length;         /* Size of bitmap in bytes */
+};
+
+/* Upcase table entry */
+struct exfat_entry_upcase {
+    uint8_t  type;                /* Entry type */
+    uint8_t  reserved1[3];
+    uint32_t checksum;           /* Table checksum */
+    uint8_t  reserved2[12];
+    uint32_t first_cluster;       /* First cluster of table */
+    uint64_t data_length;         /* Size of table in bytes */
+};
+
+/* Volume label entry */
+struct exfat_entry_label {
+    uint8_t  type;                /* Entry type */
+    uint8_t  character_count;     /* Number of characters */
+    uint16_t volume_label[11];    /* UTF-16 characters */
+    uint8_t  reserved[8];
+};
+
 #endif /* _FSCK_EXFAT_H_ */ 

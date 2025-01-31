@@ -28,7 +28,7 @@
 #include <time.h>
 
 #include "fsck_exfat.h"
-#include "exfat.h"
+
 
 #define MAX_CLUSTERS 0xFFFFFFF5  /* Maximum valid cluster number */
 
