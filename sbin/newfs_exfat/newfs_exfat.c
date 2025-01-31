@@ -296,51 +296,38 @@ write_boot_sector(struct mkfs_exfat_ctx *ctx)
 int
 write_fat(struct mkfs_exfat_ctx *ctx)
 {
-    uint32_t *fat_sector;
-    size_t i;
+    uint8_t *fat_sector;
+    uint32_t i;
+    uint32_t *fat;
 
-    /* Allocate buffer for FAT sector */
+    /* Allocate sector buffer */
     fat_sector = calloc(1, ctx->bytes_per_sector);
     if (fat_sector == NULL)
         return -1;
 
-    /* First two clusters are reserved */
-    fat_sector[0] = htole32(0xFFFFFFF8);  /* Media type */
-    fat_sector[1] = htole32(0xFFFFFFFF);  /* End of cluster chain */
-
-    /* Root directory cluster */
-    fat_sector[2] = htole32(0xFFFFFFFF);  /* End of cluster chain */
-
-    /* Write first FAT sector */
-    if (lseek(ctx->fd, ctx->bytes_per_sector * 24, SEEK_SET) < 0)
-        goto error;
-    if (write(ctx->fd, fat_sector, ctx->bytes_per_sector) != ctx->bytes_per_sector)
-        goto error;
-
-    /* Clear remaining FAT sectors */
-    memset(fat_sector, 0, ctx->bytes_per_sector);
-    for (i = 1; i < ctx->fat_sectors; i++) {
-        if (write(ctx->fd, fat_sector, ctx->bytes_per_sector) != ctx->bytes_per_sector)
-            goto error;
+    /* Write first FAT sector with special entries */
+    fat = (uint32_t *)fat_sector;
+    fat[0] = 0xFFFFFFF8;  /* Media type */
+    fat[1] = 0xFFFFFFFF;  /* EOC for cluster 1 */
+    
+    /* Mark bitmap and upcase table clusters */
+    for (i = 0; i < ctx->boot.cluster_count && i < 128; i++) {
+        if (i == ctx->bitmap_cluster || 
+            (i >= ctx->upcase_cluster && 
+             i < ctx->upcase_cluster + (128 * 1024 + ctx->sectors_per_cluster * EXFAT_SECTOR_SIZE - 1) / 
+                                      (ctx->sectors_per_cluster * EXFAT_SECTOR_SIZE))) {
+            fat[i] = 0xFFFFFFFF;  /* EOC */
+        }
     }
 
-    /* Write second FAT if needed */
-    if (ctx->number_of_fats == 2) {
-        if (lseek(ctx->fd, ctx->bytes_per_sector * (24 + ctx->fat_sectors), SEEK_SET) < 0)
-            goto error;
-        for (i = 0; i < ctx->fat_sectors; i++) {
-            if (write(ctx->fd, fat_sector, ctx->bytes_per_sector) != ctx->bytes_per_sector)
-                goto error;
-        }
+    if (write_sector(ctx, ctx->boot.fat_offset, fat_sector) < 0) {
+        free(fat_sector);
+        return -1;
     }
 
     free(fat_sector);
     report_progress(ctx, "FAT written");
     return 0;
-
-error:
-    free(fat_sector);
-    return -1;
 }
 
 static int
@@ -375,6 +362,7 @@ write_bitmap(struct mkfs_exfat_ctx *ctx)
     uint8_t *bitmap;
     size_t bitmap_size;
     size_t i;
+    uint32_t upcase_clusters;
 
     /* Calculate bitmap size (rounded up to cluster size) */
     bitmap_size = (ctx->cluster_count + 7) / 8;
@@ -385,8 +373,19 @@ write_bitmap(struct mkfs_exfat_ctx *ctx)
     if (bitmap == NULL)
         return -1;
 
-    /* Mark first three clusters as used (reserved, root dir, bitmap) */
-    bitmap[0] = 0x07;
+    /* Calculate number of clusters used by upcase table */
+    upcase_clusters = (128 * 1024 + ctx->sectors_per_cluster * EXFAT_SECTOR_SIZE - 1) / 
+                     (ctx->sectors_per_cluster * EXFAT_SECTOR_SIZE);
+
+    /* Mark clusters as used */
+    bitmap[0] = 0x03;  /* First two clusters are reserved */
+    bitmap[ctx->bitmap_cluster / 8] |= 1 << (ctx->bitmap_cluster % 8);  /* Bitmap cluster */
+    
+    /* Mark upcase table clusters */
+    for (i = 0; i < upcase_clusters; i++) {
+        uint32_t cluster = ctx->upcase_cluster + i;
+        bitmap[cluster / 8] |= 1 << (cluster % 8);
+    }
 
     /* Write bitmap */
     if (lseek(ctx->fd, ctx->bytes_per_sector * 
@@ -459,11 +458,13 @@ write_upcase_table(struct mkfs_exfat_ctx *ctx)
     }
 
     /* Write upcase table */
-    uint32_t clusters_needed = (table_size + ctx->sectors_per_cluster - 1) / ctx->sectors_per_cluster;
+    uint32_t clusters_needed = (table_size + ctx->sectors_per_cluster * EXFAT_SECTOR_SIZE - 1) / 
+                              (ctx->sectors_per_cluster * EXFAT_SECTOR_SIZE);
     for (i = 0; i < clusters_needed; i++) {
-        uint32_t write_size = MIN(ctx->sectors_per_cluster, table_size - i * ctx->sectors_per_cluster);
-        if (write_cluster(ctx, ctx->upcase_cluster + i, 
-                         (uint8_t *)upcase + i * ctx->sectors_per_cluster) < 0) {
+        uint32_t write_size = MIN(ctx->sectors_per_cluster * EXFAT_SECTOR_SIZE,
+                                 table_size - i * ctx->sectors_per_cluster * EXFAT_SECTOR_SIZE);
+        if (write_cluster(ctx, ctx->upcase_cluster + i,
+                         (uint8_t *)upcase + i * ctx->sectors_per_cluster * EXFAT_SECTOR_SIZE) < 0) {
             error = -1;
             goto out;
         }
