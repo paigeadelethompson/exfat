@@ -159,6 +159,9 @@ calculate_layout(struct mkfs_exfat_ctx *ctx)
     uint32_t upcase_clusters;
     uint32_t root_clusters = 1;  /* Start with 1 cluster for root dir */
 
+    /* Calculate reserved sectors */
+    uint32_t reserved_sectors = EXFAT_BOOT_REGION_SIZE;  /* 24 sectors for boot region */
+
     /* If cluster size not specified, auto-select based on volume size */
     if (ctx->sectors_per_cluster == 0) {
         uint64_t size_mb = (ctx->total_sectors * EXFAT_SECTOR_SIZE) / (1024 * 1024);
@@ -174,8 +177,14 @@ calculate_layout(struct mkfs_exfat_ctx *ctx)
 
     sectors_per_cluster = ctx->sectors_per_cluster;
 
-    /* Calculate number of clusters */
-    cluster_count = (ctx->total_sectors - 24) / sectors_per_cluster;
+    /* First calculate FAT size for maximum possible clusters */
+    cluster_count = (ctx->total_sectors - reserved_sectors) / sectors_per_cluster;
+    fat_sectors = ((uint64_t)cluster_count * 4 + EXFAT_SECTOR_SIZE - 1) / 
+                 EXFAT_SECTOR_SIZE;
+
+    /* Now recalculate actual cluster count considering FAT size */
+    uint32_t data_sectors = ctx->total_sectors - reserved_sectors - fat_sectors;
+    cluster_count = data_sectors / sectors_per_cluster;
 
     /* Calculate FAT size (4 bytes per cluster) */
     fat_sectors = ((uint64_t)cluster_count * 4 + EXFAT_SECTOR_SIZE - 1) / 
