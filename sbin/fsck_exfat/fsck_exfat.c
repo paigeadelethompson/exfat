@@ -118,21 +118,6 @@ write_fat_sector(struct fsck_exfat_ctx *ctx, off_t sector, uint32_t *buffer)
         return -1;
     }
 
-    /* If we have a second FAT, update it too */
-    if (ctx->emp->boot.number_of_fats == 2) {
-        offset += ctx->emp->boot.fat_length * EXFAT_SECTOR_SIZE;
-        if (lseek(ctx->fd, offset, SEEK_SET) != offset) {
-            report_error(ctx, FSCK_ERR_FATAL, "seek error: %s", strerror(errno));
-            return -1;
-        }
-
-        bytes = write(ctx->fd, buffer, EXFAT_SECTOR_SIZE);
-        if (bytes != EXFAT_SECTOR_SIZE) {
-            report_error(ctx, FSCK_ERR_FATAL, "write error: %s", strerror(errno));
-            return -1;
-        }
-    }
-
     return 0;
 }
 
@@ -146,6 +131,12 @@ check_boot_sector(struct fsck_exfat_ctx *ctx)
     /* Read boot sector */
     if (read_sector(ctx, 0, &boot) < 0)
         return -1;
+
+    /* Check number of FATs - we only support single FAT */
+    if (boot.number_of_fats != 1) {
+        warnx("Multiple FATs not supported (found %d FATs)", boot.number_of_fats);
+        return -1;
+    }
 
     /* Check jump instruction */
     if (boot.jump_boot[0] != 0xEB || boot.jump_boot[2] != 0x90) {
@@ -186,13 +177,6 @@ check_boot_sector(struct fsck_exfat_ctx *ctx)
         report_error(ctx, FSCK_ERR_FATAL,
             "Invalid sectors per cluster: %u",
             1 << boot.sectors_per_cluster_shift);
-        return -1;
-    }
-
-    /* Check number of FATs (must be 1 or 2) */
-    if (boot.number_of_fats < 1 || boot.number_of_fats > 2) {
-        report_error(ctx, FSCK_ERR_FATAL,
-            "Invalid number of FATs: %u", boot.number_of_fats);
         return -1;
     }
 
@@ -295,53 +279,6 @@ check_fat(struct fsck_exfat_ctx *ctx)
                 goto out;
             }
         }
-    }
-
-    /* If there are 2 FATs, verify they match */
-    if (ctx->emp->boot.number_of_fats == 2) {
-        uint32_t *fat2_sector = malloc(EXFAT_SECTOR_SIZE);
-        if (fat2_sector == NULL) {
-            report_error(ctx, FSCK_ERR_FATAL, "Cannot allocate second FAT buffer");
-            error = -1;
-            goto out;
-        }
-
-        for (sector = 0; sector < ctx->emp->boot.fat_length; sector++) {
-            /* Read from first FAT */
-            error = read_fat_sector(ctx, sector, fat_sector);
-            if (error) {
-                free(fat2_sector);
-                goto out;
-            }
-
-            /* Read from second FAT */
-            error = read_fat_sector(ctx, sector + ctx->emp->boot.fat_length, fat2_sector);
-            if (error) {
-                free(fat2_sector);
-                goto out;
-            }
-
-            /* Compare sectors */
-            if (memcmp(fat_sector, fat2_sector, EXFAT_SECTOR_SIZE) != 0) {
-                report_error(ctx, FSCK_ERR_SERIOUS,
-                    "FAT1 and FAT2 mismatch in sector %u", sector);
-                if (ctx->fix_errors) {
-                    /* Copy FAT1 to FAT2 */
-                    off_t offset = (ctx->emp->boot.fat_offset + 
-                                  sector + ctx->emp->boot.fat_length) * EXFAT_SECTOR_SIZE;
-                    if (lseek(ctx->fd, offset, SEEK_SET) != offset ||
-                        write(ctx->fd, fat_sector, EXFAT_SECTOR_SIZE) != EXFAT_SECTOR_SIZE) {
-                        report_error(ctx, FSCK_ERR_FATAL,
-                            "Error writing FAT2 sector: %s", strerror(errno));
-                        free(fat2_sector);
-                        error = -1;
-                        goto out;
-                    }
-                    ctx->modified = 1;
-                }
-            }
-        }
-        free(fat2_sector);
     }
 
 out:
