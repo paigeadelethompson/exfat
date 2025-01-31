@@ -36,6 +36,16 @@
 #define EXFAT_VOL_DIRTY           0x0001
 #define EXFAT_VOL_ACTIVE_FAT      0x0002
 
+/* ExFAT directory entry types */
+#define EXFAT_ENTRY_EOD            0x00
+#define EXFAT_ENTRY_DELETED        0xE5
+#define EXFAT_ENTRY_BITMAP         0x81
+#define EXFAT_ENTRY_UPCASE         0x82
+#define EXFAT_ENTRY_LABEL          0x83
+#define EXFAT_ENTRY_FILE           0x85
+#define EXFAT_ENTRY_STREAM         0xC0
+#define EXFAT_ENTRY_NAME           0xC1
+
 /* ExFAT file attributes */
 #define EXFAT_ATTR_READ_ONLY       0x0001
 #define EXFAT_ATTR_HIDDEN          0x0002

@@ -318,13 +318,13 @@ write_bitmap(struct mkfs_exfat_ctx *ctx)
     return 0;
 }
 
-static int
+int
 write_upcase_table(struct mkfs_exfat_ctx *ctx)
 {
     uint16_t *upcase;
-    uint32_t table_size = 128 * 1024;  /* 128KB standard size */
     uint32_t checksum = 0;
-    uint32_t i;
+    size_t table_size = 128 * 1024;  /* 128KB */
+    size_t i;
     int error = 0;
 
     /* Allocate upcase table buffer */
