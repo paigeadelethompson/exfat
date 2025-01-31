@@ -207,6 +207,17 @@ calculate_layout(struct mkfs_exfat_ctx *ctx)
     ctx->first_cluster = ctx->root_cluster + root_clusters;
 
     /* Verify layout */
+    if (ctx->verbose) {
+        printf("Layout verification:\n");
+        printf("  Total sectors: %lu\n", (unsigned long)ctx->total_sectors);
+        printf("  Sectors per cluster: %u\n", sectors_per_cluster);
+        printf("  Cluster count: %u\n", cluster_count);
+        printf("  FAT sectors: %u\n", fat_sectors);
+        printf("  Cluster heap offset: %u\n", ctx->boot.cluster_heap_offset);
+        printf("  Required sectors: %lu\n", 
+               (unsigned long)(ctx->boot.cluster_heap_offset + 
+               ((uint64_t)cluster_count * sectors_per_cluster)));
+    }
     if (ctx->boot.cluster_heap_offset + 
         ((uint64_t)cluster_count * sectors_per_cluster) > ctx->total_sectors) {
         warnx("Invalid filesystem layout - device too small");
