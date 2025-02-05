@@ -38,6 +38,9 @@ struct cluster_info {
     uint32_t owner;     /* First cluster of file/dir that owns this cluster */
 };
 
+static int get_fat_entry(struct fsck_exfat_ctx *ctx, uint32_t cluster, uint32_t *value);
+static int validate_cluster_number(struct fsck_exfat_ctx *ctx, uint32_t cluster, const char *desc);
+
 static void
 usage(void)
 {
@@ -82,19 +85,30 @@ read_sector(struct fsck_exfat_ctx *ctx, off_t sector, void *buffer)
 }
 
 static int
-read_fat_sector(struct fsck_exfat_ctx *ctx, off_t sector, uint32_t *buffer)
+read_fat_sector(struct fsck_exfat_ctx *ctx, uint32_t sector, void *buffer)
 {
-    off_t offset = (ctx->emp->boot.fat_offset + sector) * EXFAT_SECTOR_SIZE;
+    off_t offset;
     ssize_t bytes;
 
+    /* Validate sector number */
+    if (sector >= ctx->emp->boot.fat_length) {
+        report_error(ctx, FSCK_ERR_FATAL, "FAT sector number out of range: %u", sector);
+        return -1;
+    }
+
+    /* Calculate absolute sector offset */
+    offset = (off_t)(ctx->emp->boot.fat_offset + sector) * EXFAT_SECTOR_SIZE;
+
     if (lseek(ctx->fd, offset, SEEK_SET) != offset) {
-        report_error(ctx, FSCK_ERR_FATAL, "seek error: %s", strerror(errno));
+        report_error(ctx, FSCK_ERR_FATAL, "FAT seek error: %s (offset=%lld)", 
+                    strerror(errno), (long long)offset);
         return -1;
     }
 
     bytes = read(ctx->fd, buffer, EXFAT_SECTOR_SIZE);
     if (bytes != EXFAT_SECTOR_SIZE) {
-        report_error(ctx, FSCK_ERR_FATAL, "read error: %s", strerror(errno));
+        report_error(ctx, FSCK_ERR_FATAL, "FAT read error: %s (bytes=%zd)", 
+                    strerror(errno), bytes);
         return -1;
     }
 
@@ -121,102 +135,259 @@ write_fat_sector(struct fsck_exfat_ctx *ctx, off_t sector, uint32_t *buffer)
     return 0;
 }
 
+/* Helper function to write FAT entry */
+static int
+write_fat_entry(struct fsck_exfat_ctx *ctx, uint32_t cluster, uint32_t value)
+{
+    uint32_t *fat_sector;
+    uint32_t sector_index = cluster / (EXFAT_SECTOR_SIZE / 4);
+    uint32_t entry_index = cluster % (EXFAT_SECTOR_SIZE / 4);
+    int error;
+
+    fat_sector = malloc(EXFAT_SECTOR_SIZE);
+    if (fat_sector == NULL) {
+        report_error(ctx, FSCK_ERR_FATAL, "Cannot allocate FAT sector buffer");
+        return -1;
+    }
+
+    /* Read FAT sector */
+    error = read_fat_sector(ctx, sector_index, fat_sector);
+    if (error) {
+        free(fat_sector);
+        return error;
+    }
+
+    /* Update entry */
+    fat_sector[entry_index] = htole32(value);
+
+    /* Write back sector */
+    error = write_fat_sector(ctx, sector_index, fat_sector);
+    free(fat_sector);
+
+    return error;
+}
+
+static void
+log_info(struct fsck_exfat_ctx *ctx, const char *fmt, ...)
+{
+    va_list ap;
+    
+    if (!ctx->verbose)
+        return;
+        
+    va_start(ap, fmt);
+    vprintf(fmt, ap);
+    va_end(ap);
+    printf("\n");
+}
+
+static void
+print_progress(struct fsck_exfat_ctx *ctx, const char *phase, uint32_t current, uint32_t total)
+{
+    if (!ctx->verbose)
+        return;
+        
+    printf("\r%s: %u/%u (%2.1f%%)...", 
+           phase, current, total, 
+           total ? ((float)current * 100.0f) / total : 0.0f);
+    fflush(stdout);
+}
+
 int
 check_boot_sector(struct fsck_exfat_ctx *ctx)
 {
-    struct exfat_boot_record boot;
-    uint8_t *sector = (uint8_t *)&boot;
-    int i;
+    log_info(ctx, "Checking boot sector...");
+    struct exfat_boot_sector boot;
+    int error;
 
-    /* Read boot sector */
-    if (read_sector(ctx, 0, &boot) < 0)
+    error = read_sector(ctx, 0, &boot);
+    if (error)
         return -1;
 
-    /* Check number of FATs - we only support single FAT */
-    if (boot.number_of_fats != 1) {
-        warnx("Multiple FATs not supported (found %d FATs)", boot.number_of_fats);
-        return -1;
-    }
-
-    /* Check jump instruction */
-    if (boot.jump_boot[0] != 0xEB || boot.jump_boot[2] != 0x90) {
-        report_error(ctx, FSCK_ERR_FATAL,
-            "Invalid jump instruction in boot sector");
+    /* Validate signature */
+    if (memcmp(boot.jump_boot, "\xEB\x76\x90", 3) != 0) {
+        report_error(ctx, FSCK_ERR_FATAL, "Invalid jump boot signature");
         return -1;
     }
 
-    /* Check filesystem name */
     if (memcmp(boot.fs_name, "EXFAT   ", 8) != 0) {
-        report_error(ctx, FSCK_ERR_FATAL,
-            "Invalid filesystem name in boot sector");
+        report_error(ctx, FSCK_ERR_FATAL, "Not an ExFAT filesystem");
         return -1;
     }
 
-    /* Check must_be_zero field */
-    for (i = 0; i < 53; i++) {
+    /* Validate must-be-zero region */
+    for (int i = 0; i < 53; i++) {
         if (boot.must_be_zero[i] != 0) {
-            report_error(ctx, FSCK_ERR_SERIOUS,
-                "Non-zero value in reserved field");
-            if (ctx->fix_errors) {
-                boot.must_be_zero[i] = 0;
-                ctx->modified = 1;
-            }
+            report_error(ctx, FSCK_ERR_FATAL, "Non-zero value in reserved field");
+            return -1;
         }
     }
 
-    /* Check bytes per sector (must be power of 2, 512-4096) */
-    uint32_t bytes_per_sector = 1 << boot.bytes_per_sector_shift;
+    /* Validate sector size (must be power of 2, 512-4096) */
+    uint32_t sector_size = 1 << boot.bytes_per_sector_shift;
     if (boot.bytes_per_sector_shift < 9 || boot.bytes_per_sector_shift > 12) {
-        report_error(ctx, FSCK_ERR_FATAL,
-            "Invalid bytes per sector: %u", bytes_per_sector);
+        report_error(ctx, FSCK_ERR_FATAL, "Invalid sector size: %u", sector_size);
         return -1;
     }
 
-    /* Check sectors per cluster (must be power of 2) */
-    if (boot.sectors_per_cluster_shift > 25 - boot.bytes_per_sector_shift) {
-        report_error(ctx, FSCK_ERR_FATAL,
-            "Invalid sectors per cluster: %u",
-            1 << boot.sectors_per_cluster_shift);
+    /* Validate sectors per cluster (must be power of 2) */
+    if (boot.sectors_per_cluster_shift == 0) {
+        report_error(ctx, FSCK_ERR_FATAL, "Invalid sectors per cluster: 0");
         return -1;
     }
 
-    /* Check volume length */
-    if (boot.volume_length == 0) {
-        report_error(ctx, FSCK_ERR_FATAL, "Volume length is zero");
+    /* Validate number of FATs (should be 1 or 2) */
+    if (boot.number_of_fats < 1 || boot.number_of_fats > 2) {
+        report_error(ctx, FSCK_ERR_FATAL, "Invalid number of FATs: %u", 
+                    boot.number_of_fats);
         return -1;
     }
 
-    /* Check FAT offset and length */
-    if (boot.fat_offset == 0 || boot.fat_length == 0) {
-        report_error(ctx, FSCK_ERR_FATAL,
-            "Invalid FAT offset/length: %u/%u",
-            boot.fat_offset, boot.fat_length);
+    /* Validate boot signature */
+    if (le16toh(boot.boot_signature) != EXFAT_BOOT_SIGNATURE) {
+        report_error(ctx, FSCK_ERR_FATAL, "Invalid boot sector signature");
         return -1;
     }
 
-    /* Check cluster heap offset */
-    if (boot.cluster_heap_offset < boot.fat_offset + boot.fat_length) {
-        report_error(ctx, FSCK_ERR_FATAL,
-            "Cluster heap overlaps with FAT");
-        return -1;
-    }
-
-    /* Check cluster count */
-    if (boot.cluster_count == 0) {
-        report_error(ctx, FSCK_ERR_FATAL, "Cluster count is zero");
-        return -1;
-    }
-
-    /* Check root directory cluster */
-    if (boot.root_dir_cluster < 2 ||
-        boot.root_dir_cluster >= boot.cluster_count + 2) {
-        report_error(ctx, FSCK_ERR_FATAL,
-            "Invalid root directory cluster: %u", boot.root_dir_cluster);
-        return -1;
-    }
-
-    /* Store boot sector in context */
+    /* Copy boot sector to mount structure */
     memcpy(&ctx->emp->boot, &boot, sizeof(boot));
+
+    /* Find bitmap and upcase clusters from root directory */
+    error = find_system_files(ctx);
+    if (error)
+        return -1;
+
+    log_info(ctx, "Boot sector OK");
+    log_info(ctx, "  Bytes per sector: %u", 1 << ctx->emp->boot.bytes_per_sector_shift);
+    log_info(ctx, "  Sectors per cluster: %u", 1 << ctx->emp->boot.sectors_per_cluster_shift);
+    log_info(ctx, "  Total clusters: %u", ctx->emp->boot.cluster_count);
+    log_info(ctx, "  Volume size: %llu MB", 
+        ((uint64_t)ctx->emp->boot.cluster_count * 
+         (1 << ctx->emp->boot.sectors_per_cluster_shift) * 
+         (1 << ctx->emp->boot.bytes_per_sector_shift)) / (1024 * 1024));
+    
+    return 0;
+}
+
+int
+find_system_files(struct fsck_exfat_ctx *ctx)
+{
+    uint8_t *buffer;
+    size_t bytes_per_cluster;
+    int error = -1;
+
+    /* Validate root directory cluster */
+    if (ctx->emp->boot.root_dir_cluster < 2) {
+        report_error(ctx, FSCK_ERR_FATAL, "Invalid root directory cluster: %u",
+                    ctx->emp->boot.root_dir_cluster);
+        return -1;
+    }
+
+    /* Calculate cluster size */
+    bytes_per_cluster = EXFAT_SECTOR_SIZE << ctx->emp->boot.sectors_per_cluster_shift;
+
+    /* Allocate cluster buffer */
+    buffer = malloc(bytes_per_cluster);
+    if (buffer == NULL) {
+        report_error(ctx, FSCK_ERR_FATAL, "Cannot allocate cluster buffer");
+        return -1;
+    }
+
+    /* Read root directory cluster */
+    error = read_cluster(ctx, ctx->emp->boot.root_dir_cluster, buffer);
+    if (error)
+        goto out;
+
+    /* Look for bitmap and upcase table entries */
+    uint8_t *entry = buffer;
+    
+    /* First entry should be volume label */
+    if (*entry != EXFAT_ENTRY_LABEL) {
+        report_error(ctx, FSCK_ERR_FATAL, "Missing volume label in root directory");
+        goto out;
+    }
+    entry += EXFAT_ENTRY_SIZE;  /* Skip volume label */
+
+    /* Next should be bitmap */
+    if (*entry != EXFAT_ENTRY_BITMAP) {
+        report_error(ctx, FSCK_ERR_FATAL, "Missing bitmap entry in root directory");
+        goto out;
+    }
+    /* Get bitmap cluster from bitmap entry */
+    struct exfat_entry_bitmap *bitmap = (struct exfat_entry_bitmap *)entry;
+    ctx->bitmap_cluster = le32toh(bitmap->first_cluster);
+    if (ctx->bitmap_cluster < 2 || ctx->bitmap_cluster >= ctx->emp->boot.cluster_count + 2) {
+        report_error(ctx, FSCK_ERR_FATAL, "Invalid bitmap cluster: %u", ctx->bitmap_cluster);
+        goto out;
+    }
+    entry += EXFAT_ENTRY_SIZE;
+
+    /* Next should be upcase table */
+    if (*entry != EXFAT_ENTRY_UPCASE) {
+        report_error(ctx, FSCK_ERR_FATAL, "Missing upcase table entry in root directory");
+        goto out;
+    }
+    /* Get upcase cluster from upcase entry */
+    struct exfat_entry_upcase *upcase = (struct exfat_entry_upcase *)entry;
+    ctx->upcase_cluster = le32toh(upcase->first_cluster);
+    if (ctx->upcase_cluster < 2 || ctx->upcase_cluster >= ctx->emp->boot.cluster_count + 2) {
+        report_error(ctx, FSCK_ERR_FATAL, "Invalid upcase cluster: %u", ctx->upcase_cluster);
+        goto out;
+    }
+
+    error = 0;
+
+out:
+    free(buffer);
+    return error;
+}
+
+static int
+read_bitmap_sector(struct fsck_exfat_ctx *ctx, uint32_t sector, void *buffer)
+{
+    off_t offset;
+    ssize_t bytes;
+
+    /* Calculate absolute sector offset */
+    offset = ((off_t)ctx->emp->boot.cluster_heap_offset +
+             ((off_t)ctx->bitmap_cluster - 2) * (1 << ctx->emp->boot.sectors_per_cluster_shift)) * EXFAT_SECTOR_SIZE +
+             sector * EXFAT_SECTOR_SIZE;
+
+    if (lseek(ctx->fd, offset, SEEK_SET) != offset) {
+        report_error(ctx, FSCK_ERR_FATAL, "bitmap seek error: %s (offset=%lld)",
+                    strerror(errno), (long long)offset);
+        return -1;
+    }
+
+    bytes = read(ctx->fd, buffer, EXFAT_SECTOR_SIZE);
+    if (bytes != EXFAT_SECTOR_SIZE) {
+        report_error(ctx, FSCK_ERR_FATAL, "bitmap read error: %s (bytes=%zd)",
+                    strerror(errno), bytes);
+        return -1;
+    }
+
+    return 0;
+}
+
+static int
+write_bitmap_sector(struct fsck_exfat_ctx *ctx, off_t sector, uint8_t *buffer)
+{
+    off_t offset = ((off_t)ctx->emp->boot.cluster_heap_offset +
+                   ((off_t)ctx->bitmap_cluster - 2) * 
+                   (1 << ctx->emp->boot.sectors_per_cluster_shift) +
+                   sector) * EXFAT_SECTOR_SIZE;
+    ssize_t bytes;
+
+    if (lseek(ctx->fd, offset, SEEK_SET) != offset) {
+        report_error(ctx, FSCK_ERR_FATAL, "seek error: %s", strerror(errno));
+        return -1;
+    }
+
+    bytes = write(ctx->fd, buffer, EXFAT_SECTOR_SIZE);
+    if (bytes != EXFAT_SECTOR_SIZE) {
+        report_error(ctx, FSCK_ERR_FATAL, "write error: %s", strerror(errno));
+        return -1;
+    }
 
     return 0;
 }
@@ -224,91 +395,139 @@ check_boot_sector(struct fsck_exfat_ctx *ctx)
 int
 check_fat(struct fsck_exfat_ctx *ctx)
 {
+    log_info(ctx, "Checking File Allocation Table...");
     uint32_t *fat_sector;
-    uint32_t total_clusters = ctx->emp->boot.cluster_count;
-    uint32_t entries_per_sector = EXFAT_SECTOR_SIZE / sizeof(uint32_t);
-    uint32_t sector, i;
+    uint32_t total_sectors;
+    uint32_t i;
     int error = 0;
 
-    /* Allocate buffer for one FAT sector */
+    /* Allocate sector buffer */
     fat_sector = malloc(EXFAT_SECTOR_SIZE);
     if (fat_sector == NULL) {
-        report_error(ctx, FSCK_ERR_FATAL, "Cannot allocate FAT sector buffer");
+        report_error(ctx, FSCK_ERR_FATAL, "Cannot allocate FAT buffer");
         return -1;
     }
 
-    /* Check each FAT sector */
-    for (sector = 0; sector < ctx->emp->boot.fat_length; sector++) {
-        error = read_fat_sector(ctx, sector, fat_sector);
-        if (error)
-            goto out;
+    /* Read first FAT sector */
+    error = read_fat_sector(ctx, 0, fat_sector);
+    if (error)
+        goto out;
 
-        /* Check entries in this sector */
-        for (i = 0; i < entries_per_sector; i++) {
-            uint32_t cluster = sector * entries_per_sector + i;
-            uint32_t entry = le32toh(fat_sector[i]);
+    /* First FAT entry must be media type (0xFFFFFFF8) */
+    if (le32toh(fat_sector[0]) != 0xFFFFFFF8) {
+        report_error(ctx, FSCK_ERR_NORMAL,
+            "Invalid media type in FAT (expected 0xFFFFFFF8, got 0x%x)",
+            le32toh(fat_sector[0]));
+        error = 1;
+    }
 
-            /* Skip if beyond total clusters */
-            if (cluster >= total_clusters)
-                continue;
+    /* Second FAT entry must be end of chain */
+    if (le32toh(fat_sector[1]) != EXFAT_CLUSTER_END) {
+        report_error(ctx, FSCK_ERR_NORMAL,
+            "Invalid second FAT entry (expected 0xFFFFFFFF, got 0x%x)",
+            le32toh(fat_sector[1]));
+        error = 1;
+    }
 
-            /* Check for valid cluster values */
-            if (entry != EXFAT_CLUSTER_FREE &&
-                entry != EXFAT_CLUSTER_BAD &&
-                entry != EXFAT_CLUSTER_END &&
-                (entry < 2 || entry >= total_clusters + 2)) {
-                report_error(ctx, FSCK_ERR_NORMAL,
-                    "Invalid cluster value %u in FAT entry %u",
-                    entry, cluster + 2);
-                if (ctx->fix_errors) {
-                    /* Mark as free if invalid */
-                    fat_sector[i] = htole32(EXFAT_CLUSTER_FREE);
-                    ctx->modified = 1;
-                }
-            }
+    /* Check remaining FAT entries */
+    total_sectors = ctx->emp->boot.fat_length;
+    
+    /* Allocate cluster tracking array */
+    struct cluster_info *cluster_map = calloc(ctx->emp->boot.cluster_count, 
+                                            sizeof(struct cluster_info));
+    if (cluster_map == NULL) {
+        report_error(ctx, FSCK_ERR_FATAL, "Cannot allocate cluster map");
+        error = -1;
+        goto out;
+    }
+
+    for (i = 0; i < total_sectors; i++) {
+        uint32_t j;
+
+        if (i > 0) {
+            error = read_fat_sector(ctx, i, fat_sector);
+            if (error)
+                goto out_free;
         }
 
-        /* Write back if modified */
-        if (ctx->modified) {
-            off_t offset = (ctx->emp->boot.fat_offset + sector) * EXFAT_SECTOR_SIZE;
-            if (lseek(ctx->fd, offset, SEEK_SET) != offset ||
-                write(ctx->fd, fat_sector, EXFAT_SECTOR_SIZE) != EXFAT_SECTOR_SIZE) {
-                report_error(ctx, FSCK_ERR_FATAL,
-                    "Error writing FAT sector: %s", strerror(errno));
-                error = -1;
-                goto out;
+        for (j = 0; j < EXFAT_SECTOR_SIZE/4; j++) {
+            uint32_t cluster = i * (EXFAT_SECTOR_SIZE/4) + j;
+            uint32_t val = le32toh(fat_sector[j]);
+
+            if (cluster < 2)
+                continue;
+            if (cluster >= ctx->emp->boot.cluster_count + 2)
+                break;
+
+            /* Track cluster chains */
+            if (val != EXFAT_CLUSTER_FREE && val != EXFAT_CLUSTER_BAD && 
+                val != EXFAT_CLUSTER_END) {
+                if (val < 2 || val >= ctx->emp->boot.cluster_count + 2) {
+                    report_error(ctx, FSCK_ERR_NORMAL,
+                        "Invalid cluster chain: cluster %u points to %u",
+                        cluster, val);
+                    error = 1;
+                    continue;
+                }
+                cluster_map[val - 2].refs++;
             }
         }
     }
 
+    /* Check for cross-linked clusters */
+    for (i = 0; i < ctx->emp->boot.cluster_count; i++) {
+        if (cluster_map[i].refs > 1) {
+            report_error(ctx, FSCK_ERR_NORMAL,
+                "Cluster %u is cross-linked (%u references)",
+                i + 2, cluster_map[i].refs);
+            error = 1;
+        }
+    }
+
+out_free:
+    free(cluster_map);
 out:
     free(fat_sector);
+    if (ctx->verbose)
+        printf("\n");
+    log_info(ctx, "FAT check complete");
     return error;
 }
 
-static int
+int
 read_cluster(struct fsck_exfat_ctx *ctx, uint32_t cluster, void *buffer)
 {
     off_t offset;
     size_t bytes_per_cluster;
     ssize_t bytes;
 
-    /* Calculate cluster offset */
-    offset = ((off_t)ctx->emp->boot.cluster_heap_offset +
-             ((off_t)cluster - 2) * (1 << ctx->emp->boot.sectors_per_cluster_shift)) *
-             EXFAT_SECTOR_SIZE;
-
-    /* Calculate cluster size */
-    bytes_per_cluster = EXFAT_SECTOR_SIZE << ctx->emp->boot.sectors_per_cluster_shift;
-
-    if (lseek(ctx->fd, offset, SEEK_SET) != offset) {
-        report_error(ctx, FSCK_ERR_FATAL, "seek error: %s", strerror(errno));
+    /* Validate cluster number */
+    if (cluster < 2 || cluster >= ctx->emp->boot.cluster_count + 2) {
+        report_error(ctx, FSCK_ERR_FATAL, "Invalid cluster number: %u", cluster);
         return -1;
     }
 
+    /* First calculate bytes per cluster */
+    bytes_per_cluster = (size_t)EXFAT_SECTOR_SIZE << ctx->emp->boot.sectors_per_cluster_shift;
+
+    /* Then calculate absolute offset:
+     * cluster_heap_offset gives the sector where clusters start
+     * (cluster - 2) because clusters start at 2
+     */
+    offset = (off_t)ctx->emp->boot.cluster_heap_offset * EXFAT_SECTOR_SIZE +
+            ((off_t)cluster - 2) * bytes_per_cluster;
+
+    if (lseek(ctx->fd, offset, SEEK_SET) != offset) {
+        report_error(ctx, FSCK_ERR_FATAL, "cluster seek error: %s (cluster=%u offset=%lld)", 
+                    strerror(errno), cluster, (long long)offset);
+        return -1;
+    }
+
+    /* Read the entire cluster */
     bytes = read(ctx->fd, buffer, bytes_per_cluster);
-    if (bytes != bytes_per_cluster) {
-        report_error(ctx, FSCK_ERR_FATAL, "read error: %s", strerror(errno));
+    if (bytes != (ssize_t)bytes_per_cluster) {
+        report_error(ctx, FSCK_ERR_FATAL, "cluster read error: %s (cluster=%u bytes=%zd)", 
+                    strerror(errno), cluster, bytes);
         return -1;
     }
 
@@ -320,6 +539,7 @@ validate_timestamp(struct fsck_exfat_ctx *ctx, const char *desc,
                   uint32_t date, uint32_t time, uint8_t time_ms, uint8_t tz)
 {
     int year, month, day, hour, min, sec;
+    int error = 0;
 
     /* Extract fields */
     year = EXFAT_YEAR(date);
@@ -329,30 +549,68 @@ validate_timestamp(struct fsck_exfat_ctx *ctx, const char *desc,
     min = EXFAT_MINUTE(time);
     sec = EXFAT_SECOND(time);
 
-    /* Basic range checks */
-    if (year < 1980 || year > 2107 ||
-        month < 1 || month > 12 ||
-        day < 1 || day > 31 ||
-        hour > 23 || min > 59 || sec > 59 ||
-        time_ms > 199 || (tz != 0x80 && tz > 0x3F)) {
+    /* Validate ranges */
+    if (year < 1980 || year > 2107) {
         report_error(ctx, FSCK_ERR_NORMAL,
-            "Invalid %s timestamp: %04d-%02d-%02d %02d:%02d:%02d.%03d tz=%02x",
-            desc, year, month, day, hour, min, sec, time_ms * 10, tz);
-        return -1;
+            "Invalid %s year: %d (valid range 1980-2107)", desc, year);
+        error = 1;
     }
 
-    /* Check days in month */
-    static const int days_in_month[] = {31,28,31,30,31,30,31,31,30,31,30,31};
-    int max_days = days_in_month[month - 1];
-    if (month == 2 && ((year % 4 == 0 && year % 100 != 0) || year % 400 == 0))
-        max_days = 29;
-    if (day > max_days) {
+    if (month < 1 || month > 12) {
         report_error(ctx, FSCK_ERR_NORMAL,
-            "Invalid day (%d) in %s timestamp", day, desc);
-        return -1;
+            "Invalid %s month: %d", desc, month);
+        error = 1;
     }
 
-    return 0;
+    /* Check days per month, accounting for leap years */
+    int max_days = 31;
+    if (month == 4 || month == 6 || month == 9 || month == 11)
+        max_days = 30;
+    else if (month == 2) {
+        max_days = 28;
+        if ((year % 4 == 0 && year % 100 != 0) || year % 400 == 0)
+            max_days = 29;
+    }
+
+    if (day < 1 || day > max_days) {
+        report_error(ctx, FSCK_ERR_NORMAL,
+            "Invalid %s day: %d (max %d for month %d)",
+            desc, day, max_days, month);
+        error = 1;
+    }
+
+    if (hour > 23) {
+        report_error(ctx, FSCK_ERR_NORMAL,
+            "Invalid %s hour: %d", desc, hour);
+        error = 1;
+    }
+
+    if (min > 59) {
+        report_error(ctx, FSCK_ERR_NORMAL,
+            "Invalid %s minute: %d", desc, min);
+        error = 1;
+    }
+
+    if (sec > 59) {
+        report_error(ctx, FSCK_ERR_NORMAL,
+            "Invalid %s second: %d", desc, sec);
+        error = 1;
+    }
+
+    if (time_ms > 199) {  /* 10ms units, max 1990ms */
+        report_error(ctx, FSCK_ERR_NORMAL,
+            "Invalid %s milliseconds: %d", desc, time_ms * 10);
+        error = 1;
+    }
+
+    /* Timezone offset is in 15-minute intervals from UTC-12 to UTC+12 */
+    if (tz != 0x00 && (tz < 0x80 - 48 || tz > 0x80 + 48)) {
+        report_error(ctx, FSCK_ERR_NORMAL,
+            "Invalid %s timezone offset: %d", desc, (int)tz - 0x80);
+        error = 1;
+    }
+
+    return error;
 }
 
 static int
@@ -394,8 +652,8 @@ validate_name_chars(struct fsck_exfat_ctx *ctx, const uint16_t *name, size_t len
 static int
 check_direntry_set(struct fsck_exfat_ctx *ctx, struct exfat_direntry_set *es)
 {
-    uint16_t checksum;
-    int i;
+    uint16_t checksum, calc_checksum;
+    int error = 0;
 
     /* Check file entry type */
     if (es->file.type != EXFAT_ENTRY_FILE) {
@@ -403,84 +661,111 @@ check_direntry_set(struct fsck_exfat_ctx *ctx, struct exfat_direntry_set *es)
         return -1;
     }
 
-    /* Check secondary count */
-    if (es->file.secondary_count < 2 || es->file.secondary_count > 18) {
+    /* Validate secondary count */
+    if (es->file.secondary_count < 2 || 
+        es->file.secondary_count > EXFAT_MAX_SECONDARY) {
         report_error(ctx, FSCK_ERR_NORMAL, 
             "Invalid secondary count: %u", es->file.secondary_count);
         return -1;
     }
 
     /* Validate timestamps */
-    if (validate_timestamp(ctx, "creation",
-                         es->file.create_timestamp,
-                         es->file.create_timestamp,
-                         es->file.create_time_ms,
-                         es->file.create_tz) < 0 ||
-        validate_timestamp(ctx, "modification",
-                         es->file.last_modified_timestamp,
-                         es->file.last_modified_timestamp,
-                         es->file.last_modified_time_ms,
-                         es->file.last_modified_tz) < 0 ||
-        validate_timestamp(ctx, "access",
-                         es->file.last_access_timestamp,
-                         es->file.last_access_timestamp,
-                         0, es->file.last_access_tz) < 0) {
-        return -1;
-    }
+    error |= validate_timestamp(ctx, "create",
+        es->file.create_timestamp,         /* date */
+        es->file.create_timestamp,         /* time */
+        es->file.create_time_ms,          /* time_ms */
+        es->file.create_tz);              /* tz */
 
-    /* Check stream entry type */
+    error |= validate_timestamp(ctx, "modify",
+        es->file.last_modified_timestamp,  /* date */
+        es->file.last_modified_timestamp,  /* time */
+        es->file.last_modified_time_ms,    /* time_ms */
+        es->file.last_modified_tz);        /* tz */
+
+    error |= validate_timestamp(ctx, "access",
+        es->file.last_access_timestamp,    /* date */
+        es->file.last_access_timestamp,    /* time */
+        0,                                 /* time_ms */
+        es->file.last_access_tz);         /* tz */
+
+    /* Check stream entry */
     if (es->stream.type != EXFAT_ENTRY_STREAM) {
-        report_error(ctx, FSCK_ERR_NORMAL, "Invalid stream entry type: %02x", es->stream.type);
+        report_error(ctx, FSCK_ERR_NORMAL, 
+            "Invalid stream entry type: %02x", es->stream.type);
         return -1;
     }
 
-    /* Check name length */
-    if (es->stream.name_length == 0 || 
-        es->stream.name_length > 255 ||
-        es->stream.name_length > es->name_count * 15) {
-        report_error(ctx, FSCK_ERR_NORMAL, "Invalid name length: %u", es->stream.name_length);
+    /* Validate name length */
+    if (es->stream.name_length > EXFAT_MAX_NAMELEN) {
+        report_error(ctx, FSCK_ERR_NORMAL,
+            "Invalid name length: %u", es->stream.name_length);
+        return -1;
+    }
+
+    /* Number of name entries should match name length */
+    int required_name_entries = (es->stream.name_length + 14) / 15;
+    if (required_name_entries != es->name_count) {
+        report_error(ctx, FSCK_ERR_NORMAL,
+            "Name entry count mismatch: got %d, need %d",
+            es->name_count, required_name_entries);
         return -1;
     }
 
     /* Check name entries */
-    for (i = 0; i < es->name_count; i++) {
+    for (int i = 0; i < es->name_count; i++) {
         if (es->name[i].type != EXFAT_ENTRY_NAME) {
-            report_error(ctx, FSCK_ERR_NORMAL, 
+            report_error(ctx, FSCK_ERR_NORMAL,
                 "Invalid name entry type: %02x", es->name[i].type);
             return -1;
         }
     }
 
-    /* Validate name characters */
-    if (validate_name_chars(ctx, es->name[0].name, es->stream.name_length) < 0)
-        return -1;
+    /* Validate filename characters */
+    error |= validate_name_chars(ctx, es->name[0].name, 
+                               es->stream.name_length);
 
-    /* Verify name hash */
-    uint16_t calc_hash = exfat_calc_name_hash(ctx->emp, es->name[0].name, 
-                                             es->stream.name_length);
-    if (calc_hash != es->stream.name_hash) {
-        report_error(ctx, FSCK_ERR_NORMAL, 
-            "Name hash mismatch (stored: %04x, calculated: %04x)",
-            es->stream.name_hash, calc_hash);
-        if (ctx->fix_errors) {
-            es->stream.name_hash = calc_hash;
-            ctx->modified = 1;
-        }
-        return -1;
+    /* Calculate and verify checksum */
+    checksum = es->file.checksum;
+    calc_checksum = exfat_checksum_direntry(es);
+    if (checksum != calc_checksum) {
+        report_error(ctx, FSCK_ERR_NORMAL,
+            "Directory entry checksum mismatch (stored=%04x, calculated=%04x)",
+            checksum, calc_checksum);
+        error = 1;
     }
 
-    /* Verify checksum */
-    checksum = exfat_checksum_direntry(es);
-    if (checksum != es->file.checksum) {
-        report_error(ctx, FSCK_ERR_NORMAL, "Directory entry checksum mismatch");
-        if (ctx->fix_errors) {
-            es->file.checksum = checksum;
-            ctx->modified = 1;
+    /* Validate cluster range */
+    if (es->stream.first_cluster != 0) {
+        if (es->stream.first_cluster < 2 || 
+            es->stream.first_cluster >= ctx->emp->boot.cluster_count + 2) {
+            report_error(ctx, FSCK_ERR_NORMAL,
+                "Invalid first cluster: %u", es->stream.first_cluster);
+            error = 1;
         }
-        return -1;
     }
 
-    return 0;
+    /* Valid data length must not exceed actual length */
+    if (es->stream.valid_data_length > es->stream.data_length) {
+        report_error(ctx, FSCK_ERR_NORMAL,
+            "Valid data length (%llu) exceeds actual length (%llu)",
+            (unsigned long long)es->stream.valid_data_length,
+            (unsigned long long)es->stream.data_length);
+        error = 1;
+    }
+
+    /* For directories, lengths must be cluster-aligned */
+    if (es->file.file_attributes & EXFAT_ATTR_DIRECTORY) {
+        uint64_t cluster_size = (uint64_t)EXFAT_SECTOR_SIZE << 
+                              ctx->emp->boot.sectors_per_cluster_shift;
+        if (es->stream.valid_data_length % cluster_size != 0 ||
+            es->stream.data_length % cluster_size != 0) {
+            report_error(ctx, FSCK_ERR_NORMAL,
+                "Directory size not cluster-aligned");
+            error = 1;
+        }
+    }
+
+    return error;
 }
 
 int
@@ -495,6 +780,9 @@ check_cluster_chain(struct fsck_exfat_ctx *ctx, uint32_t start_cluster, uint64_t
 
     /* Calculate cluster size */
     cluster_size = EXFAT_SECTOR_SIZE << ctx->emp->boot.sectors_per_cluster_shift;
+
+    /* Round expected size up to cluster boundary */
+    expected_size = (expected_size + cluster_size - 1) & ~((uint64_t)cluster_size - 1);
 
     /* Allocate cluster tracking map */
     cluster_map = calloc(ctx->emp->boot.cluster_count, sizeof(struct cluster_info));
@@ -536,81 +824,92 @@ check_cluster_chain(struct fsck_exfat_ctx *ctx, uint32_t start_cluster, uint64_t
                     goto out;
                 }
 
-                /* Read old cluster */
-                if (read_cluster(ctx, cluster, buffer) < 0) {
+                /* Read current cluster */
+                error = read_cluster(ctx, cluster, buffer);
+                if (error) {
                     free(buffer);
-                    error = -1;
                     goto out;
                 }
 
-                /* Find free cluster */
-                for (new_cluster = 2; new_cluster < ctx->emp->boot.cluster_count + 2; new_cluster++) {
-                    if (cluster_map[new_cluster - 2].refs == 0)
-                        break;
-                }
-
-                if (new_cluster >= ctx->emp->boot.cluster_count + 2) {
-                    report_error(ctx, FSCK_ERR_FATAL, "No free clusters available");
+                /* Find and allocate new cluster */
+                error = find_free_cluster(ctx, &new_cluster);
+                if (error) {
                     free(buffer);
-                    error = -1;
                     goto out;
                 }
 
-                /* Write to new cluster */
-                if (write_cluster(ctx, new_cluster, buffer) < 0) {
-                    free(buffer);
-                    error = -1;
-                    goto out;
-                }
-
+                /* Write data to new cluster */
+                error = write_cluster(ctx, new_cluster, buffer);
                 free(buffer);
-
-                /* Update FAT to point to new cluster */
-                error = read_fat_sector(ctx, cluster / (EXFAT_SECTOR_SIZE / 4), fat_sector);
                 if (error)
                     goto out;
 
-                fat_sector[cluster % (EXFAT_SECTOR_SIZE / 4)] = htole32(new_cluster);
+                /* Update FAT to point to new cluster */
                 cluster = new_cluster;
                 ctx->modified = 1;
+            } else {
+                error = 1;
+                goto out;
             }
-            error = -1;
-            goto out;
         }
 
         /* Mark cluster as used */
         cluster_map[cluster - 2].refs++;
-        if (cluster_map[cluster - 2].refs == 1)
-            cluster_map[cluster - 2].owner = start_cluster;
+        cluster_map[cluster - 2].owner = start_cluster;
 
-        /* Read FAT sector containing this cluster */
-        error = read_fat_sector(ctx, cluster / (EXFAT_SECTOR_SIZE / 4), fat_sector);
+        /* Update total size */
+        total_size += cluster_size;
+        if (total_size > expected_size) {
+            report_error(ctx, FSCK_ERR_NORMAL,
+                "Cluster chain exceeds expected size (%llu > %llu)",
+                (unsigned long long)total_size,
+                (unsigned long long)expected_size);
+            if (ctx->fix_errors) {
+                /* Truncate chain here */
+                error = write_fat_entry(ctx, cluster, EXFAT_CLUSTER_END);
+                if (error)
+                    goto out;
+                ctx->modified = 1;
+                break;
+            } else {
+                error = 1;
+                goto out;
+            }
+        }
+
+        /* Get next cluster */
+        error = get_next_cluster(ctx, cluster, &next_cluster);
         if (error)
             goto out;
 
-        /* Get next cluster */
-        next_cluster = le32toh(fat_sector[cluster % (EXFAT_SECTOR_SIZE / 4)]);
-
-        /* Update size */
-        total_size += cluster_size;
-
-        /* Check for loops */
-        if (total_size / cluster_size > ctx->emp->boot.cluster_count) {
-            report_error(ctx, FSCK_ERR_SERIOUS, "Cluster chain loop detected");
-            error = -1;
-            goto out;
+        /* Check for invalid next cluster */
+        if (next_cluster != EXFAT_CLUSTER_END && 
+            (next_cluster < 2 || next_cluster >= ctx->emp->boot.cluster_count + 2)) {
+            report_error(ctx, FSCK_ERR_NORMAL,
+                "Invalid next cluster %u in chain", next_cluster);
+            if (ctx->fix_errors) {
+                /* End chain here */
+                error = write_fat_entry(ctx, cluster, EXFAT_CLUSTER_END);
+                if (error)
+                    goto out;
+                ctx->modified = 1;
+                break;
+            } else {
+                error = 1;
+                goto out;
+            }
         }
 
-        /* Move to next cluster */
         cluster = next_cluster;
     }
 
-    /* Check if chain size matches file size */
+    /* Verify final size matches expected */
     if (total_size < expected_size) {
-        report_error(ctx, FSCK_ERR_NORMAL, 
-            "Cluster chain too short (expected %llu bytes, got %llu)",
-            (unsigned long long)expected_size, (unsigned long long)total_size);
-        error = -1;
+        report_error(ctx, FSCK_ERR_NORMAL,
+            "Cluster chain too short (%llu < %llu)",
+            (unsigned long long)total_size,
+            (unsigned long long)expected_size);
+        error = 1;
     }
 
 out:
@@ -654,17 +953,34 @@ check_file(struct fsck_exfat_ctx *ctx, struct exfat_direntry_set *es)
 int
 check_directory(struct fsck_exfat_ctx *ctx, uint32_t cluster)
 {
-    char *buffer;
+    static int depth = 0;
+    depth++;
+    
+    if (depth == 1)
+        log_info(ctx, "Checking directory structure...");
+    else if (ctx->verbose)
+        printf("%*sChecking directory at cluster %u...\n", depth*2, "", cluster);
+    
+    if (validate_cluster_number(ctx, cluster, "directory") < 0)
+        return -1;
+    
+    char *buffer = NULL;
     struct exfat_direntry_set es;
     size_t bytes_per_cluster;
     uint32_t next_cluster;
     int error = 0;
 
     /* Calculate cluster size */
-    bytes_per_cluster = EXFAT_SECTOR_SIZE << ctx->emp->boot.sectors_per_cluster_shift;
+    bytes_per_cluster = (size_t)EXFAT_SECTOR_SIZE << ctx->emp->boot.sectors_per_cluster_shift;
+
+    /* Validate cluster size */
+    if (bytes_per_cluster == 0 || bytes_per_cluster > (1ULL << 25)) {  /* Max 32MB cluster */
+        report_error(ctx, FSCK_ERR_FATAL, "Invalid cluster size: %zu", bytes_per_cluster);
+        return -1;
+    }
 
     /* Allocate cluster buffer */
-    buffer = malloc(bytes_per_cluster);
+    buffer = calloc(1, bytes_per_cluster);
     if (buffer == NULL) {
         report_error(ctx, FSCK_ERR_FATAL, "Cannot allocate cluster buffer");
         return -1;
@@ -673,6 +989,7 @@ check_directory(struct fsck_exfat_ctx *ctx, uint32_t cluster)
     /* Process all clusters in the chain */
     while (cluster != EXFAT_CLUSTER_END) {
         uint8_t *entry = (uint8_t *)buffer;
+        uint8_t *buffer_end = (uint8_t *)buffer + bytes_per_cluster;
         int entry_count = 0;
 
         /* Read cluster */
@@ -681,7 +998,7 @@ check_directory(struct fsck_exfat_ctx *ctx, uint32_t cluster)
             goto out;
 
         /* Process all entries in cluster */
-        while (entry < (uint8_t *)buffer + bytes_per_cluster) {
+        while (entry + sizeof(struct exfat_entry_file) <= buffer_end) {
             /* Check for end of directory */
             if (*entry == EXFAT_ENTRY_EOD)
                 goto done;
@@ -694,24 +1011,56 @@ check_directory(struct fsck_exfat_ctx *ctx, uint32_t cluster)
 
             /* Check if this is a file entry */
             if (*entry == EXFAT_ENTRY_FILE) {
+                /* Ensure we have enough space for the full entry set */
                 memset(&es, 0, sizeof(es));
+
+                /* Read file entry */
+                if (entry + sizeof(es.file) > buffer_end) {
+                    report_error(ctx, FSCK_ERR_NORMAL, "Truncated file entry");
+                    error = -1;
+                    goto out;
+                }
                 memcpy(&es.file, entry, sizeof(es.file));
                 entry += sizeof(es.file);
 
+                /* Validate secondary count */
+                if (es.file.secondary_count < 2 || es.file.secondary_count > EXFAT_MAX_SECONDARY) {
+                    report_error(ctx, FSCK_ERR_NORMAL, "Invalid secondary count: %u", 
+                               es.file.secondary_count);
+                    error = -1;
+                    goto out;
+                }
+
                 /* Read stream entry */
-                if (entry >= (uint8_t *)buffer + bytes_per_cluster) {
-                    report_error(ctx, FSCK_ERR_NORMAL, "Directory entry spans clusters");
+                if (entry + sizeof(es.stream) > buffer_end) {
+                    report_error(ctx, FSCK_ERR_NORMAL, "Truncated stream entry");
                     error = -1;
                     goto out;
                 }
                 memcpy(&es.stream, entry, sizeof(es.stream));
                 entry += sizeof(es.stream);
 
-                /* Read name entries */
+                /* Validate name length */
+                if (es.stream.name_length > EXFAT_MAX_NAMELEN) {
+                    report_error(ctx, FSCK_ERR_NORMAL, "Invalid name length: %u", 
+                               es.stream.name_length);
+                    error = -1;
+                    goto out;
+                }
+
+                /* Calculate required name entries */
                 es.name_count = (es.stream.name_length + 14) / 15;
+                if (es.name_count > EXFAT_MAX_SECONDARY - 1) {
+                    report_error(ctx, FSCK_ERR_NORMAL, "Too many name entries required: %d", 
+                               es.name_count);
+                    error = -1;
+                    goto out;
+                }
+
+                /* Read name entries */
                 for (int i = 0; i < es.name_count; i++) {
-                    if (entry >= (uint8_t *)buffer + bytes_per_cluster) {
-                        report_error(ctx, FSCK_ERR_NORMAL, "Directory entry spans clusters");
+                    if (entry + sizeof(es.name[i]) > buffer_end) {
+                        report_error(ctx, FSCK_ERR_NORMAL, "Truncated name entry");
                         error = -1;
                         goto out;
                     }
@@ -720,22 +1069,25 @@ check_directory(struct fsck_exfat_ctx *ctx, uint32_t cluster)
                 }
 
                 /* Check directory entry set */
-                if (check_direntry_set(ctx, &es) < 0) {
-                    error = -1;
+                error = check_direntry_set(ctx, &es);
+                if (error < 0)
                     goto out;
-                }
 
                 /* Check file/directory contents */
                 if (es.file.file_attributes & EXFAT_ATTR_DIRECTORY) {
-                    if (check_directory(ctx, es.stream.first_cluster) < 0) {
+                    /* Prevent infinite recursion */
+                    if (es.stream.first_cluster == cluster) {
+                        report_error(ctx, FSCK_ERR_NORMAL, "Directory points to itself");
                         error = -1;
                         goto out;
                     }
+                    error = check_directory(ctx, es.stream.first_cluster);
+                    if (error < 0)
+                        goto out;
                 } else {
-                    if (check_file(ctx, &es) < 0) {
-                        error = -1;
+                    error = check_file(ctx, &es);
+                    if (error < 0)
                         goto out;
-                    }
                 }
 
                 entry_count++;
@@ -746,15 +1098,27 @@ check_directory(struct fsck_exfat_ctx *ctx, uint32_t cluster)
         }
 
         /* Get next cluster */
-        error = read_fat_sector(ctx, cluster / (EXFAT_SECTOR_SIZE / 4),
-                              (uint32_t *)buffer);
+        error = get_next_cluster(ctx, cluster, &next_cluster);
         if (error)
             goto out;
-        next_cluster = le32toh(((uint32_t *)buffer)[cluster % (EXFAT_SECTOR_SIZE / 4)]);
+
+        if (next_cluster == cluster) {
+            report_error(ctx, FSCK_ERR_NORMAL, "Cluster points to itself");
+            error = -1;
+            goto out;
+        }
+
         cluster = next_cluster;
+        
+        if (entry_count > 0 && ctx->verbose && depth == 1)
+            printf("\rFound %d entries...", entry_count);
     }
 
-done:
+    if (ctx->verbose && depth == 1)
+        printf("\n");
+        
+    depth--;
+    done:
     error = 0;
 out:
     free(buffer);
@@ -767,141 +1131,108 @@ check_root_dir(struct fsck_exfat_ctx *ctx)
     return check_directory(ctx, ctx->emp->boot.root_dir_cluster);
 }
 
-static int
-read_bitmap_sector(struct fsck_exfat_ctx *ctx, off_t sector, uint8_t *buffer)
-{
-    off_t offset = ((off_t)ctx->emp->boot.cluster_heap_offset +
-                   ((off_t)ctx->bitmap_cluster - 2) * 
-                   (1 << ctx->emp->boot.sectors_per_cluster_shift) +
-                   sector) * EXFAT_SECTOR_SIZE;
-    ssize_t bytes;
-
-    if (lseek(ctx->fd, offset, SEEK_SET) != offset) {
-        report_error(ctx, FSCK_ERR_FATAL, "seek error: %s", strerror(errno));
-        return -1;
-    }
-
-    bytes = read(ctx->fd, buffer, EXFAT_SECTOR_SIZE);
-    if (bytes != EXFAT_SECTOR_SIZE) {
-        report_error(ctx, FSCK_ERR_FATAL, "read error: %s", strerror(errno));
-        return -1;
-    }
-
-    return 0;
-}
-
-static int
-write_bitmap_sector(struct fsck_exfat_ctx *ctx, off_t sector, uint8_t *buffer)
-{
-    off_t offset = ((off_t)ctx->emp->boot.cluster_heap_offset +
-                   ((off_t)ctx->bitmap_cluster - 2) * 
-                   (1 << ctx->emp->boot.sectors_per_cluster_shift) +
-                   sector) * EXFAT_SECTOR_SIZE;
-    ssize_t bytes;
-
-    if (lseek(ctx->fd, offset, SEEK_SET) != offset) {
-        report_error(ctx, FSCK_ERR_FATAL, "seek error: %s", strerror(errno));
-        return -1;
-    }
-
-    bytes = write(ctx->fd, buffer, EXFAT_SECTOR_SIZE);
-    if (bytes != EXFAT_SECTOR_SIZE) {
-        report_error(ctx, FSCK_ERR_FATAL, "write error: %s", strerror(errno));
-        return -1;
-    }
-
-    return 0;
-}
-
 int
 check_bitmap(struct fsck_exfat_ctx *ctx)
 {
-    uint8_t *bitmap_sector;
-    uint32_t *fat_sector;
+    log_info(ctx, "Checking allocation bitmap...");
+    uint8_t *bitmap_sector = NULL;
     uint32_t total_clusters = ctx->emp->boot.cluster_count;
-    uint32_t bitmap_sectors = (total_clusters + 8 * EXFAT_SECTOR_SIZE - 1) / 
-                             (8 * EXFAT_SECTOR_SIZE);
-    uint32_t sector, i;
+    uint32_t bitmap_sectors = (total_clusters + 7) / 8 / EXFAT_SECTOR_SIZE;
     int error = 0;
 
-    /* Allocate buffers */
-    bitmap_sector = malloc(EXFAT_SECTOR_SIZE);
-    fat_sector = malloc(EXFAT_SECTOR_SIZE);
-    if (bitmap_sector == NULL || fat_sector == NULL) {
-        report_error(ctx, FSCK_ERR_FATAL, "Cannot allocate sector buffers");
-        error = -1;
-        goto out;
+    /* Allocate with proper error checking */
+    bitmap_sector = calloc(1, EXFAT_SECTOR_SIZE);
+    if (bitmap_sector == NULL) {
+        report_error(ctx, FSCK_ERR_FATAL, "Cannot allocate bitmap buffer");
+        return -1;
     }
 
-    /* Check each bitmap sector */
-    for (sector = 0; sector < bitmap_sectors; sector++) {
-        error = read_bitmap_sector(ctx, sector, bitmap_sector);
+    /* Check each sector of the bitmap */
+    for (uint32_t i = 0; i < bitmap_sectors && !error; i++) {
+        print_progress(ctx, "Checking bitmap", i, bitmap_sectors);
+        error = read_bitmap_sector(ctx, i, bitmap_sector);
         if (error)
             goto out;
 
         /* Check each bit in this sector */
-        for (i = 0; i < EXFAT_SECTOR_SIZE * 8; i++) {
-            uint32_t cluster = sector * EXFAT_SECTOR_SIZE * 8 + i;
-            int bitmap_allocated = (bitmap_sector[i / 8] & (1 << (i % 8))) != 0;
-            uint32_t fat_entry;
-
-            /* Skip if beyond total clusters */
-            if (cluster >= total_clusters)
+        for (uint32_t j = 0; j < EXFAT_SECTOR_SIZE * 8; j++) {
+            uint32_t cluster = i * EXFAT_SECTOR_SIZE * 8 + j + 2;
+            
+            if (cluster >= total_clusters + 2)
                 break;
 
-            /* Read FAT entry */
-            error = read_fat_sector(ctx, (cluster + 2) / (EXFAT_SECTOR_SIZE / 4),
-                                  fat_sector);
+            int is_allocated = (bitmap_sector[j / 8] & (1 << (j % 8))) != 0;
+
+            /* System clusters (2-4) must be allocated */
+            if (cluster >= 2 && cluster <= 4 && !is_allocated) {
+                if (ctx->fix_errors) {
+                    bitmap_sector[j / 8] |= (1 << (j % 8));
+                    error = write_bitmap_sector(ctx, i, bitmap_sector);
+                    if (error)
+                        goto out;
+                    ctx->modified = 1;
+                }
+                continue;
+            }
+
+            /* Check against FAT */
+            uint32_t fat_value = 0;
+            error = get_fat_entry(ctx, cluster, &fat_value);
             if (error)
                 goto out;
 
-            fat_entry = le32toh(fat_sector[(cluster + 2) % (EXFAT_SECTOR_SIZE / 4)]);
-            int fat_allocated = (fat_entry != EXFAT_CLUSTER_FREE);
-
-            /* Check for mismatches */
-            if (bitmap_allocated != fat_allocated) {
+            if ((fat_value == EXFAT_CLUSTER_FREE && is_allocated) ||
+                (fat_value != EXFAT_CLUSTER_FREE && !is_allocated)) {
                 report_error(ctx, FSCK_ERR_NORMAL,
-                    "Cluster %u allocation mismatch (bitmap: %d, FAT: %d)",
-                    cluster + 2, bitmap_allocated, fat_allocated);
+                    "Bitmap inconsistency for cluster %u (bitmap=%d, FAT=%s)",
+                    cluster, is_allocated,
+                    fat_value == EXFAT_CLUSTER_FREE ? "free" : "allocated");
                 if (ctx->fix_errors) {
                     /* Update bitmap to match FAT */
-                    if (fat_allocated)
-                        bitmap_sector[i / 8] |= (1 << (i % 8));
+                    if (fat_value == EXFAT_CLUSTER_FREE)
+                        bitmap_sector[j / 8] &= ~(1 << (j % 8));
                     else
-                        bitmap_sector[i / 8] &= ~(1 << (i % 8));
+                        bitmap_sector[j / 8] |= (1 << (j % 8));
+                    error = write_bitmap_sector(ctx, i, bitmap_sector);
+                    if (error)
+                        goto out;
                     ctx->modified = 1;
                 }
             }
         }
-
-        /* Write back if modified */
-        if (ctx->modified) {
-            error = write_bitmap_sector(ctx, sector, bitmap_sector);
-            if (error)
-                goto out;
-        }
     }
 
-out:
+    if (ctx->verbose)
+        printf("\n");
+        
+    log_info(ctx, "Bitmap check complete");
+    out:
     free(bitmap_sector);
-    free(fat_sector);
     return error;
 }
 
 static int
 recover_lost_clusters(struct fsck_exfat_ctx *ctx)
 {
-    uint32_t *fat_sector;
-    uint8_t *bitmap_sector;
-    struct cluster_info *cluster_map;
+    log_info(ctx, "Checking for lost clusters...");
+    uint32_t *fat_sector = NULL;
+    uint8_t *bitmap_sector = NULL;
+    struct cluster_info *cluster_map = NULL;
     uint32_t total_clusters = ctx->emp->boot.cluster_count;
     uint32_t lost_count = 0;
     int error = 0;
 
-    /* Allocate buffers */
-    fat_sector = malloc(EXFAT_SECTOR_SIZE);
-    bitmap_sector = malloc(EXFAT_SECTOR_SIZE);
+    /* Validate cluster count */
+    if (total_clusters == 0 || total_clusters > MAX_CLUSTERS) {
+        report_error(ctx, FSCK_ERR_FATAL, "Invalid cluster count: %u", total_clusters);
+        return -1;
+    }
+
+    /* Allocate buffers with proper initialization */
+    fat_sector = calloc(1, EXFAT_SECTOR_SIZE);
+    bitmap_sector = calloc(1, EXFAT_SECTOR_SIZE);
     cluster_map = calloc(total_clusters, sizeof(struct cluster_info));
+
     if (fat_sector == NULL || bitmap_sector == NULL || cluster_map == NULL) {
         report_error(ctx, FSCK_ERR_FATAL, "Cannot allocate buffers");
         error = -1;
@@ -913,29 +1244,40 @@ recover_lost_clusters(struct fsck_exfat_ctx *ctx)
     if (error)
         goto out;
 
-    /* Second pass: check for clusters that are allocated but not referenced */
+    /* Second pass with progress */
     for (uint32_t cluster = 2; cluster < total_clusters + 2; cluster++) {
+        if (ctx->verbose && (cluster % 1000) == 0) {
+            print_progress(ctx, "Scanning clusters", 
+                         cluster - 2, total_clusters);
+        }
         uint32_t fat_entry;
         int is_allocated;
 
         /* Read FAT entry */
-        error = read_fat_sector(ctx, cluster / (EXFAT_SECTOR_SIZE / 4), fat_sector);
+        uint32_t fat_sector_index = cluster / (EXFAT_SECTOR_SIZE / sizeof(uint32_t));
+        uint32_t fat_entry_index = cluster % (EXFAT_SECTOR_SIZE / sizeof(uint32_t));
+        
+        error = read_fat_sector(ctx, fat_sector_index, fat_sector);
         if (error)
             goto out;
-        fat_entry = le32toh(fat_sector[cluster % (EXFAT_SECTOR_SIZE / 4)]);
+        fat_entry = le32toh(fat_sector[fat_entry_index]);
 
         /* Read bitmap entry */
-        uint32_t bitmap_byte = (cluster - 2) / 8;
+        uint32_t bitmap_sector_index = (cluster - 2) / (EXFAT_SECTOR_SIZE * 8);
+        uint32_t bitmap_byte = ((cluster - 2) % (EXFAT_SECTOR_SIZE * 8)) / 8;
         uint32_t bitmap_bit = (cluster - 2) % 8;
-        error = read_bitmap_sector(ctx, bitmap_byte / EXFAT_SECTOR_SIZE, bitmap_sector);
+
+        error = read_bitmap_sector(ctx, bitmap_sector_index, bitmap_sector);
         if (error)
             goto out;
-        is_allocated = (bitmap_sector[bitmap_byte % EXFAT_SECTOR_SIZE] & (1 << bitmap_bit)) != 0;
+
+        is_allocated = (bitmap_sector[bitmap_byte] & (1 << bitmap_bit)) != 0;
 
         /* Check for lost clusters */
         if (is_allocated && fat_entry != EXFAT_CLUSTER_FREE && 
             fat_entry != EXFAT_CLUSTER_BAD && fat_entry != EXFAT_CLUSTER_END &&
             cluster_map[cluster - 2].refs == 0) {
+            
             report_error(ctx, FSCK_ERR_NORMAL,
                 "Cluster %u is allocated but not referenced", cluster);
             lost_count++;
@@ -958,15 +1300,22 @@ recover_lost_clusters(struct fsck_exfat_ctx *ctx)
         }
     }
 
-    if (lost_count > 0) {
-        report_error(ctx, FSCK_ERR_NORMAL,
-            "Found %u lost clusters", lost_count);
-    }
-
-out:
-    free(cluster_map);
-    free(bitmap_sector);
-    free(fat_sector);
+    if (ctx->verbose)
+        printf("\n");
+        
+    if (lost_count > 0)
+        log_info(ctx, "Recovery complete - recovered %u lost clusters", lost_count);
+    else
+        log_info(ctx, "No lost clusters found");
+        
+    out:
+    /* Clean up in reverse order of allocation */
+    if (cluster_map != NULL)
+        free(cluster_map);
+    if (bitmap_sector != NULL)
+        free(bitmap_sector);
+    if (fat_sector != NULL)
+        free(fat_sector);
     return error;
 }
 
@@ -1068,96 +1417,142 @@ create_lost_file(struct fsck_exfat_ctx *ctx, uint32_t cluster)
 int
 check_upcase_table(struct fsck_exfat_ctx *ctx)
 {
-    uint8_t *buffer;
+    log_info(ctx, "Checking upcase table...");
+    uint8_t *buffer = NULL;
     uint32_t sector;
     uint32_t checksum = 0;
-    uint32_t size;
+    uint64_t size;
     uint32_t cluster;
-    int error;
+    int error = 0;
+    size_t bytes_per_cluster;
 
-    /* Allocate buffer */
-    buffer = malloc(EXFAT_SECTOR_SIZE);
+    /* Validate input */
+    if (ctx == NULL || ctx->emp == NULL) {
+        return -1;
+    }
+
+    /* Calculate cluster size */
+    bytes_per_cluster = (size_t)EXFAT_SECTOR_SIZE << ctx->emp->boot.sectors_per_cluster_shift;
+
+    /* Allocate buffer for largest possible read (cluster size) */
+    buffer = calloc(1, bytes_per_cluster);
     if (buffer == NULL) {
         report_error(ctx, FSCK_ERR_FATAL, "Cannot allocate buffer");
         return -1;
     }
 
-    /* Read first sector of root directory to find upcase table entry */
+    /* Calculate and validate root directory sector */
+    if (ctx->emp->boot.root_dir_cluster < 2) {
+        report_error(ctx, FSCK_ERR_FATAL, "Invalid root directory cluster");
+        goto out_error;
+    }
+
     sector = ctx->emp->boot.cluster_heap_offset +
              ((ctx->emp->boot.root_dir_cluster - 2) << ctx->emp->boot.sectors_per_cluster_shift);
 
+    /* Read root directory sector */
     error = read_sector(ctx, sector, buffer);
     if (error) {
-        free(buffer);
-        return error;
+        goto out_error;
     }
 
     /* Find upcase table entry */
-    struct exfat_entry_upcase *upcase = (struct exfat_entry_upcase *)buffer;
-    while (upcase->type != EXFAT_ENTRY_UPCASE && upcase->type != EXFAT_ENTRY_EOD) {
-        upcase++;
-        if ((uint8_t *)upcase >= buffer + EXFAT_SECTOR_SIZE) {
-            report_error(ctx, FSCK_ERR_SERIOUS, "No upcase table found");
-            free(buffer);
-            return -1;
+    struct exfat_entry_upcase *upcase = NULL;
+    uint8_t *entry = buffer;
+    size_t remaining = EXFAT_SECTOR_SIZE;
+
+    while (remaining >= sizeof(struct exfat_entry_upcase)) {
+        if (*entry == EXFAT_ENTRY_EOD)
+            break;
+        if (*entry == EXFAT_ENTRY_UPCASE) {
+            upcase = (struct exfat_entry_upcase *)entry;
+            break;
         }
+        entry += sizeof(struct exfat_entry_upcase);
+        remaining -= sizeof(struct exfat_entry_upcase);
     }
 
-    if (upcase->type == EXFAT_ENTRY_EOD) {
+    if (upcase == NULL) {
         report_error(ctx, FSCK_ERR_SERIOUS, "No upcase table found");
-        free(buffer);
-        return -1;
+        goto out_error;
     }
 
-    /* Get upcase table info */
+    /* Get and validate upcase table info */
     cluster = le32toh(upcase->first_cluster);
     size = le64toh(upcase->data_length);
     uint32_t stored_checksum = le32toh(upcase->checksum);
 
-    free(buffer);
+    if (cluster < 2 || cluster >= ctx->emp->boot.cluster_count + 2) {
+        report_error(ctx, FSCK_ERR_SERIOUS, "Invalid upcase table cluster: %u", cluster);
+        goto out_error;
+    }
 
-    /* Verify cluster chain */
-    error = check_cluster_chain(ctx, cluster, size);
-    if (error)
-        return error;
+    /* Validate size */
+    uint64_t max_size = (uint64_t)ctx->emp->boot.cluster_count * bytes_per_cluster;
+    if (size == 0 || size > max_size || (size & 1) != 0) {
+        report_error(ctx, FSCK_ERR_SERIOUS, 
+            "Invalid upcase table size: %llu (max: %llu)",
+            (unsigned long long)size, (unsigned long long)max_size);
+        goto out_error;
+    }
 
-    /* Calculate checksum */
-    uint32_t remaining = size;
-    while (remaining > 0) {
-        error = read_cluster(ctx, cluster, buffer);
+    /* Calculate checksum with progress */
+    uint64_t remaining_size = size;
+    uint32_t current_cluster = cluster;
+    uint32_t visited_clusters = 0;
+
+    while (remaining_size > 0 && visited_clusters < ctx->emp->boot.cluster_count) {
+        if (ctx->verbose && (visited_clusters % 100) == 0) {
+            print_progress(ctx, "Reading upcase table", 
+                         size - remaining_size, size);
+        }
+        /* Read and verify cluster */
+        error = read_cluster(ctx, current_cluster, buffer);
         if (error) {
-            report_error(ctx, FSCK_ERR_FATAL, "Cannot read upcase table");
-            return -1;
+            report_error(ctx, FSCK_ERR_NORMAL, 
+                "Failed to read upcase table cluster %u", current_cluster);
+            goto out_error;
         }
 
         /* Update checksum */
-        uint32_t bytes = MIN(remaining, EXFAT_SECTOR_SIZE);
-        for (uint32_t i = 0; i < bytes; i++)
+        uint32_t bytes = (uint32_t)MIN(remaining_size, bytes_per_cluster);
+        for (uint32_t i = 0; i < bytes; i++) {
             checksum = ((checksum << 31) | (checksum >> 1)) + buffer[i];
+        }
 
-        remaining -= bytes;
-        
-        if (remaining > 0) {
-            error = get_next_cluster(ctx, cluster, &cluster);
-            if (error)
-                return error;
+        remaining_size -= bytes;
+        visited_clusters++;
+
+        /* Get next cluster if needed */
+        if (remaining_size > 0) {
+            uint32_t next_cluster;
+            error = get_next_cluster(ctx, current_cluster, &next_cluster);
+            if (error || next_cluster == current_cluster) {
+                report_error(ctx, FSCK_ERR_NORMAL, "Invalid upcase table cluster chain");
+                goto out_error;
+            }
+            current_cluster = next_cluster;
         }
     }
 
-    /* Verify checksum */
+    /* Verify final checksum */
     if (checksum != stored_checksum) {
         report_error(ctx, FSCK_ERR_SERIOUS,
             "Upcase table checksum mismatch (stored: %08x, calculated: %08x)",
             stored_checksum, checksum);
-        if (ctx->fix_errors) {
-            /* TODO: Replace with default upcase table */
-            report_error(ctx, FSCK_ERR_NORMAL,
-                "Upcase table repair not implemented yet");
-        }
-        return -1;
+        error = -1;
     }
 
-    return 0;
+    if (ctx->verbose)
+        printf("\n");
+        
+    log_info(ctx, "Upcase table check complete");
+    free(buffer);
+    return error;
+
+out_error:
+    free(buffer);
+    return -1;
 }
 
 /* Calculate hash for filename */
@@ -1217,12 +1612,14 @@ write_cluster(struct fsck_exfat_ctx *ctx, uint32_t cluster, const void *buffer)
     ssize_t bytes;
 
     /* Calculate cluster offset */
-    offset = ((off_t)ctx->emp->boot.cluster_heap_offset +
-             ((off_t)cluster - 2) * (1 << ctx->emp->boot.sectors_per_cluster_shift)) *
-             EXFAT_SECTOR_SIZE;
-
-    /* Calculate cluster size */
     bytes_per_cluster = EXFAT_SECTOR_SIZE << ctx->emp->boot.sectors_per_cluster_shift;
+
+    /* Then calculate absolute offset:
+     * cluster_heap_offset gives the sector where clusters start
+     * (cluster - 2) because clusters start at 2
+     */
+    offset = (off_t)ctx->emp->boot.cluster_heap_offset * EXFAT_SECTOR_SIZE +
+            ((off_t)cluster - 2) * bytes_per_cluster;
 
     if (lseek(ctx->fd, offset, SEEK_SET) != offset) {
         report_error(ctx, FSCK_ERR_FATAL, "seek error: %s", strerror(errno));
@@ -1344,26 +1741,32 @@ out:
 int
 get_next_cluster(struct fsck_exfat_ctx *ctx, uint32_t cluster, uint32_t *next)
 {
-    uint32_t *fat_sector;
+    uint32_t value;
     int error;
 
-    /* Allocate buffer for FAT sector */
-    fat_sector = malloc(EXFAT_SECTOR_SIZE);
-    if (fat_sector == NULL) {
-        report_error(ctx, FSCK_ERR_FATAL, "Cannot allocate FAT sector buffer");
+    /* Validate input */
+    if (next == NULL) {
+        report_error(ctx, FSCK_ERR_FATAL, "Invalid NULL pointer in get_next_cluster");
         return -1;
     }
 
-    /* Read FAT sector */
-    error = read_fat_sector(ctx, cluster / (EXFAT_SECTOR_SIZE / 4), fat_sector);
-    if (error) {
-        free(fat_sector);
+    /* Get FAT entry */
+    error = get_fat_entry(ctx, cluster, &value);
+    if (error)
         return error;
+
+    /* Validate FAT entry */
+    if (value != EXFAT_CLUSTER_FREE && 
+        value != EXFAT_CLUSTER_BAD && 
+        value != EXFAT_CLUSTER_END &&
+        (value < 2 || value >= ctx->emp->boot.cluster_count + 2)) {
+        report_error(ctx, FSCK_ERR_NORMAL,
+            "Invalid cluster chain: cluster %u points to %u",
+            cluster, value);
+        return -1;
     }
 
-    /* Get next cluster */
-    *next = le32toh(fat_sector[cluster % (EXFAT_SECTOR_SIZE / 4)]);
-    free(fat_sector);
+    *next = value;
     return 0;
 }
 
@@ -1437,10 +1840,14 @@ int
 main(int argc, char *argv[])
 {
     struct fsck_exfat_ctx ctx;
+    struct exfat_mount emp;
     int ch;
+    int ret = 0;
 
     /* Initialize context */
     memset(&ctx, 0, sizeof(ctx));
+    memset(&emp, 0, sizeof(emp));
+    ctx.emp = &emp;
 
     /* Parse command line options */
     while ((ch = getopt(argc, argv, "fnvy")) != -1) {
@@ -1476,43 +1883,125 @@ main(int argc, char *argv[])
     if (ctx.fd < 0)
         err(1, "Cannot open %s", ctx.device);
 
-    /* Allocate mount structure */
-    ctx.emp = calloc(1, sizeof(struct exfat_mount));
-    if (ctx.emp == NULL)
-        err(1, "Cannot allocate mount structure");
-
+    log_info(&ctx, "Starting ExFAT filesystem check on %s", ctx.device);
+    log_info(&ctx, "Options: %s%s%s", 
+             ctx.fix_errors ? "auto-repair " : "",
+             ctx.verbose ? "verbose " : "",
+             (!ctx.fix_errors && !ctx.verbose) ? "read-only" : "");
+    
     /* Check filesystem structures */
-    if (check_boot_sector(&ctx) < 0)
+    if (check_boot_sector(&ctx) < 0) {
+        report_error(&ctx, FSCK_ERR_NORMAL, "Boot sector check failed");
         goto error;
+    }
 
-    /* Check FAT */
-    if (check_fat(&ctx) < 0)
+    if (check_fat(&ctx) < 0) {
+        report_error(&ctx, FSCK_ERR_NORMAL, "FAT check failed");
         goto error;
+    }
 
-    /* Check root directory */
-    if (check_root_dir(&ctx) < 0)
+    if (check_root_dir(&ctx) < 0) {
+        report_error(&ctx, FSCK_ERR_NORMAL, "Root directory check failed");
         goto error;
+    }
 
-    /* Check allocation bitmap */
-    if (check_bitmap(&ctx) < 0)
+    if (check_bitmap(&ctx) < 0) {
+        report_error(&ctx, FSCK_ERR_NORMAL, "Bitmap check failed");
         goto error;
+    }
 
-    /* Check upcase table */
-    if (check_upcase_table(&ctx) < 0)
+    if (check_upcase_table(&ctx) < 0) {
+        report_error(&ctx, FSCK_ERR_NORMAL, "Upcase table check failed");
         goto error;
+    }
 
-    /* Check for lost clusters */
-    if (recover_lost_clusters(&ctx) < 0)
+    if (recover_lost_clusters(&ctx) < 0) {
+        report_error(&ctx, FSCK_ERR_NORMAL, "Lost cluster recovery failed");
         goto error;
+    }
+
+    log_info(&ctx, "Filesystem check complete");
+    if (ctx.modified)
+        log_info(&ctx, "Filesystem was modified");
+    if (ctx.errors)
+        log_info(&ctx, "Found and %s %d errors", 
+                 ctx.fix_errors ? "fixed" : "found", ctx.errors);
+    else
+        log_info(&ctx, "No errors found");
 
     /* Clean up */
-    free(ctx.emp);
     close(ctx.fd);
 
     return ctx.modified ? 1 : 0;
 
 error:
-    free(ctx.emp);
     close(ctx.fd);
     return 1;
+}
+
+static int
+get_fat_entry(struct fsck_exfat_ctx *ctx, uint32_t cluster, uint32_t *value)
+{
+    uint32_t sector_index;
+    uint32_t entry_index;
+    uint32_t fat_value;
+    int error = 0;
+
+    /* Validate input parameters */
+    if (ctx == NULL || value == NULL) {
+        return -1;
+    }
+
+    /* Validate cluster number */
+    if (cluster < 2 || cluster >= ctx->emp->boot.cluster_count + 2) {
+        report_error(ctx, FSCK_ERR_NORMAL, "Invalid cluster number: %u", cluster);
+        return -1;
+    }
+
+    /* Calculate sector and entry indices */
+    sector_index = cluster / (EXFAT_SECTOR_SIZE / sizeof(uint32_t));
+    entry_index = cluster % (EXFAT_SECTOR_SIZE / sizeof(uint32_t));
+
+    /* Validate sector index */
+    if (sector_index >= ctx->emp->boot.fat_length) {
+        report_error(ctx, FSCK_ERR_NORMAL, "FAT sector index out of range: %u", sector_index);
+        return -1;
+    }
+
+    /* Use stack-based buffer for small reads */
+    uint32_t sector_buffer[EXFAT_SECTOR_SIZE / sizeof(uint32_t)];
+
+    /* Read FAT sector */
+    error = read_fat_sector(ctx, sector_index, sector_buffer);
+    if (error) {
+        return error;
+    }
+
+    /* Get FAT entry value */
+    fat_value = le32toh(sector_buffer[entry_index]);
+
+    /* Basic validation of FAT value */
+    if (fat_value != EXFAT_CLUSTER_FREE && 
+        fat_value != EXFAT_CLUSTER_BAD && 
+        fat_value != EXFAT_CLUSTER_END &&
+        (fat_value < 2 || fat_value >= ctx->emp->boot.cluster_count + 2)) {
+        report_error(ctx, FSCK_ERR_NORMAL,
+            "Invalid FAT entry value: cluster %u -> %u", cluster, fat_value);
+        return -1;
+    }
+
+    *value = fat_value;
+    return 0;
+}
+
+static int
+validate_cluster_number(struct fsck_exfat_ctx *ctx, uint32_t cluster, const char *desc)
+{
+    if (cluster < 2 || cluster >= ctx->emp->boot.cluster_count + 2) {
+        report_error(ctx, FSCK_ERR_NORMAL, 
+            "Invalid %s cluster number: %u (valid range: 2-%u)",
+            desc, cluster, ctx->emp->boot.cluster_count + 1);
+        return -1;
+    }
+    return 0;
 } 

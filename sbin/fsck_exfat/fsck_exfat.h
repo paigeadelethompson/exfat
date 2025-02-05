@@ -18,6 +18,23 @@
 #ifndef _FSCK_EXFAT_H_
 #define _FSCK_EXFAT_H_
 
+#ifdef __APPLE__
+#define	roundup2(x, y)	(((x)+((y)-1))&(~((y)-1)))
+#include <libkern/OSByteOrder.h>
+#define htobe16(x) OSSwapHostToBigInt16(x)
+#define htole16(x) OSSwapHostToLittleInt16(x)
+#define be16toh(x) OSSwapBigToHostInt16(x)
+#define le16toh(x) OSSwapLittleToHostInt16(x)
+#define htobe32(x) OSSwapHostToBigInt32(x)
+#define htole32(x) OSSwapHostToLittleInt32(x)
+#define be32toh(x) OSSwapBigToHostInt32(x)
+#define le32toh(x) OSSwapLittleToHostInt32(x)
+#define htobe64(x) OSSwapHostToBigInt64(x)
+#define htole64(x) OSSwapHostToLittleInt64(x)
+#define be64toh(x) OSSwapBigToHostInt64(x)
+#define le64toh(x) OSSwapLittleToHostInt64(x)
+#endif
+
 #include <sys/types.h>
 #include <sys/param.h>
 #include <time.h>
@@ -69,29 +86,29 @@
 #define EXFAT_VOL_ACTIVE_FAT      0x0002
 
 /* ExFAT filesystem parameters */
-struct exfat_boot_record {
-    uint8_t  jump_boot[3];         /* Boot strap short or near jump */
-    uint8_t  fs_name[8];           /* "EXFAT   " */
-    uint8_t  must_be_zero[53];     /* Zero field */
-    uint64_t partition_offset;      /* Partition offset in sectors */
-    uint64_t volume_length;        /* Volume length in sectors */
-    uint32_t fat_offset;           /* FAT offset in sectors */
-    uint32_t fat_length;           /* FAT length in sectors */
-    uint32_t cluster_heap_offset;  /* Cluster heap offset in sectors */
-    uint32_t cluster_count;        /* Total number of clusters */
-    uint32_t root_dir_cluster;     /* First cluster of root directory */
-    uint32_t volume_serial;        /* Volume serial number */
-    uint16_t fs_revision;          /* Filesystem revision */
-    uint16_t volume_flags;         /* Volume flags */
-    uint8_t  bytes_per_sector_shift;  /* Bytes per sector shift */
+struct exfat_boot_sector {
+    uint8_t  jump_boot[3];        /* Jump instruction */
+    uint8_t  fs_name[8];          /* "EXFAT   " */
+    uint8_t  must_be_zero[53];    /* MBZ */
+    uint64_t partition_offset;    /* Partition offset in sectors */
+    uint64_t volume_length;       /* Volume length in sectors */
+    uint32_t fat_offset;         /* FAT offset in sectors */
+    uint32_t fat_length;         /* FAT length in sectors */
+    uint32_t cluster_heap_offset; /* Cluster heap offset in sectors */
+    uint32_t cluster_count;      /* Total number of clusters */
+    uint32_t root_dir_cluster;   /* First cluster of root directory */
+    uint32_t volume_serial;      /* Volume serial number */
+    uint16_t fs_revision;        /* Filesystem revision */
+    uint16_t volume_flags;       /* Volume flags */
+    uint8_t  bytes_per_sector_shift; /* Bytes per sector shift (9-12) */
     uint8_t  sectors_per_cluster_shift; /* Sectors per cluster shift */
-    uint8_t  number_of_fats;       /* Number of FATs */
-    uint8_t  drive_select;         /* Drive select */
-    uint8_t  percent_in_use;       /* Percentage of clusters in use */
-    uint8_t  reserved[7];          /* Reserved */
-    uint8_t  boot_code[EXFAT_BOOT_CODE_SIZE];  /* Boot code */
-    uint16_t boot_signature;       /* Boot signature */
-};
+    uint8_t  number_of_fats;     /* Number of FATs */
+    uint8_t  drive_select;       /* Drive select */
+    uint8_t  percent_in_use;     /* Percentage of clusters in use */
+    uint8_t  reserved[7];        /* Reserved */
+    uint8_t  boot_code[390];     /* Boot code */
+    uint16_t boot_signature;     /* 0xAA55 */
+} __packed;
 
 /* Directory entry structures */
 struct exfat_entry_file {
@@ -144,7 +161,7 @@ struct exfat_entry_name {
 struct exfat_entry_bitmap {
     uint8_t  type;                /* Entry type */
     uint8_t  flags;               /* Flags */
-    uint8_t  reserved[18];
+    uint8_t  reserved[28];       /* Reserved bytes before cluster number */
     uint32_t first_cluster;       /* First cluster of bitmap */
     uint64_t data_length;         /* Size of bitmap in bytes */
 };
@@ -169,7 +186,7 @@ struct exfat_entry_label {
 
 /* Mount structure */
 struct exfat_mount {
-    struct exfat_boot_record boot;  /* Boot sector */
+    struct exfat_boot_sector boot;  /* Boot sector */
     uint32_t *fat;                /* FAT table */
     uint8_t *bitmap;              /* Allocation bitmap */
     uint16_t *upcase;             /* Upcase table */
@@ -196,6 +213,7 @@ struct fsck_exfat_ctx {
     uint32_t lost_found_cluster; /* First cluster of lost+found directory */
     uint32_t next_lost_file;    /* Counter for lost file names */
     uint32_t bitmap_cluster;     /* First cluster of allocation bitmap */
+    uint32_t upcase_cluster;     /* First cluster of upcase table */
 };
 
 /* Error severity levels */
@@ -228,5 +246,9 @@ int exfat_utf8_to_utf16(const char *utf8, uint16_t *utf16, size_t maxout, size_t
 /* Recovery functions */
 int create_lost_found_dir(struct fsck_exfat_ctx *ctx);
 int create_lost_file(struct fsck_exfat_ctx *ctx, uint32_t cluster);
+
+/* New function prototypes */
+int read_cluster(struct fsck_exfat_ctx *ctx, uint32_t cluster, void *buffer);
+int find_system_files(struct fsck_exfat_ctx *ctx);
 
 #endif /* _FSCK_EXFAT_H_ */ 
