@@ -349,7 +349,7 @@ write_fat(struct mkfs_exfat_ctx *ctx)
         return -1;
 
     /* First two clusters are reserved */
-    fat_sector[0] = htole32(0xFFFFFFFE);  /* Media type per spec */
+    fat_sector[0] = htole32(0xFFFFFFF8);  /* Media type per spec */
     fat_sector[1] = htole32(0xFFFFFFFF);  /* End of cluster chain */
 
     /* Mark clusters 2-4 as end of chain */
