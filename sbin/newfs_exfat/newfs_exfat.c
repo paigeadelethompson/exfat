@@ -543,6 +543,29 @@ confirm_format(const char *device)
     return (reply[0] == 'y' || reply[0] == 'Y');
 }
 
+/* Add checksum functions */
+static uint32_t
+exfat_checksum32(uint32_t sum, uint8_t val)
+{
+    return ((sum << 31) | (sum >> 1)) + val;
+}
+
+static uint32_t
+calculate_boot_checksum(struct mkfs_exfat_ctx *ctx, const void *data, size_t size)
+{
+    const uint8_t *p = data;
+    uint32_t sum = 0;
+    size_t i;
+
+    for (i = 0; i < size; i++) {
+        /* Skip volume flags and percent in use */
+        if (i == 106 || i == 107 || i == 112)
+            continue;
+        sum = exfat_checksum32(sum, p[i]);
+    }
+    return sum;
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -634,6 +657,48 @@ main(int argc, char *argv[])
 
     if (write_boot_sector(&ctx) < 0)
         goto error;
+
+    /* Calculate and write boot checksum */
+    uint8_t *boot_region = malloc(EXFAT_SECTOR_SIZE * 12);
+    uint8_t *checksum_sector = malloc(EXFAT_SECTOR_SIZE);
+    if (!boot_region || !checksum_sector) {
+        warn("malloc failed");
+        goto error;
+    }
+
+    /* Read first 11 sectors */
+    for (int i = 0; i < 11; i++) {
+        if (lseek(ctx.fd, i * EXFAT_SECTOR_SIZE, SEEK_SET) < 0 ||
+            read(ctx.fd, boot_region + (i * EXFAT_SECTOR_SIZE), 
+                 EXFAT_SECTOR_SIZE) != EXFAT_SECTOR_SIZE) {
+            warn("read boot region failed");
+            goto error;
+        }
+    }
+
+    /* Calculate checksum over first 11 sectors */
+    uint32_t checksum = calculate_boot_checksum(&ctx, boot_region, EXFAT_SECTOR_SIZE * 11);
+
+    /* Write checksum to main boot sector */
+    *(uint32_t *)(boot_region + 0x6A) = checksum;
+    if (lseek(ctx.fd, 0x6A, SEEK_SET) < 0 ||
+        write(ctx.fd, boot_region + 0x6A, 4) != 4) {
+        warn("write checksum failed");
+        goto error;
+    }
+
+    /* Fill sector 11 with repeated checksum value */
+    for (int i = 0; i < EXFAT_SECTOR_SIZE; i += 4) {
+        *(uint32_t *)(checksum_sector + i) = checksum;
+    }
+    if (lseek(ctx.fd, EXFAT_SECTOR_SIZE * 11, SEEK_SET) < 0 ||
+        write(ctx.fd, checksum_sector, EXFAT_SECTOR_SIZE) != EXFAT_SECTOR_SIZE) {
+        warn("write checksum sector failed");
+        goto error;
+    }
+
+    free(boot_region);
+    free(checksum_sector);
 
     if (write_fat(&ctx) < 0)
         goto error;
