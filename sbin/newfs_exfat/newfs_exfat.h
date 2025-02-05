@@ -126,6 +126,7 @@ struct mkfs_exfat_ctx {
     struct exfat_boot_record boot;  /* Boot sector */
     uint32_t first_cluster;     /* First available cluster */
     const char *volume_label;   /* Volume label */
+    uint32_t upcase_checksum;    /* Checksum of upcase table */
 };
 
 /* Directory entry structures */
@@ -186,6 +187,13 @@ struct exfat_entry_label {
     uint8_t  character_count;     /* Number of characters */
     uint16_t unicode_label[11];   /* UTF-16 characters */
     uint8_t  reserved[8];
+};
+
+struct exfat_entry_bitmap {
+    uint8_t  type;                /* Entry type */
+    uint8_t  reserved1[19];       /* Reserved */
+    uint32_t first_cluster;       /* First cluster */
+    uint64_t data_length;         /* Size in bytes */
 };
 
 /* Function prototypes */

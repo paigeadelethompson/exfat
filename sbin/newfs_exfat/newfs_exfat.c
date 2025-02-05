@@ -411,8 +411,9 @@ int
 write_upcase_table(struct mkfs_exfat_ctx *ctx)
 {
     uint16_t *upcase;
-    size_t table_size = 5836;  /* Exact size from macOS reference */
+    size_t table_size = 5836;  /* Exact size from reference */
     size_t i;
+    uint32_t checksum = 0;
 
     /* Allocate upcase table buffer */
     upcase = calloc(1, table_size);
@@ -422,22 +423,22 @@ write_upcase_table(struct mkfs_exfat_ctx *ctx)
     }
 
     /* Initialize with identity mapping */
-    for (i = 0; i < 0x10000; i++) {
+    for (i = 0; i < table_size/2; i++) {
         upcase[i] = htole16(i);
     }
 
     /* Basic Latin & Latin-1 Supplement (0x0061-0x007A) */
     for (i = 0x61; i <= 0x7A; i++) {
-        upcase[i] = htole16(i - 0x20);
+        upcase[i] = htole16(i - 0x20);  // a-z → A-Z
     }
 
-    /* Add special mappings from reference image */
-    /* Latin Extended-A */
-    for (i = 0x0101; i <= 0x0137; i += 2) {
-        upcase[i] = htole16(i - 1);
+    /* Calculate checksum */
+    for (i = 0; i < table_size; i++) {
+        checksum = ((checksum << 31) | (checksum >> 1)) + ((uint8_t *)upcase)[i];
     }
-    /* And many more mappings... */
-    /* TODO: Add all the mappings from the reference image */
+
+    /* Store checksum for root directory entry */
+    ctx->upcase_checksum = checksum;
 
     /* Write upcase table to cluster 3 */
     if (write_cluster(ctx, ctx->upcase_cluster, upcase) < 0) {
@@ -450,12 +451,34 @@ write_upcase_table(struct mkfs_exfat_ctx *ctx)
     return 0;
 }
 
+/* Add this helper function */
+static void
+set_timestamps(struct exfat_entry_file *entry, const struct timespec *ts)
+{
+    uint32_t date, time;
+    
+    unix_time_to_exfat(ts, &date, &time);
+    
+    entry->create_timestamp = date;
+    entry->last_modified_timestamp = date;
+    entry->last_access_timestamp = date;
+    
+    entry->create_time_ms = (ts->tv_nsec / 10000000) & 0xFF;  /* Convert ns to 10ms units */
+    entry->last_modified_time_ms = entry->create_time_ms;
+    
+    /* Set timezone offset to UTC */
+    entry->create_tz = 0;
+    entry->last_modified_tz = 0;
+    entry->last_access_tz = 0;
+}
+
 int
 write_root_dir(struct mkfs_exfat_ctx *ctx)
 {
     char *cluster;
-    struct exfat_direntry_set es;
+    uint8_t *entry;
     size_t outlen;
+    struct timespec ts;
 
     /* Allocate cluster buffer */
     cluster = calloc(1, ctx->sectors_per_cluster * EXFAT_SECTOR_SIZE);
@@ -464,56 +487,35 @@ write_root_dir(struct mkfs_exfat_ctx *ctx)
         return -1;
     }
 
-    /* Initialize directory entries */
-    memset(&es, 0, sizeof(es));
+    entry = (uint8_t *)cluster;
 
-    /* Create volume label entry */
-    struct exfat_entry_label *label = (struct exfat_entry_label *)&es.file;
+    /* Volume label entry (offset 0x00) */
+    struct exfat_entry_label *label = (struct exfat_entry_label *)entry;
     label->type = EXFAT_ENTRY_LABEL;
-    
-    /* Convert "Untitled" to UTF-16LE */
-    const char *label_text = "Untitled";
-    if (exfat_utf8_to_utf16(label_text, label->unicode_label, 11, &outlen) < 0) {
+    label->character_count = 8;  // "Untitled"
+    if (exfat_utf8_to_utf16("Untitled", label->unicode_label, 11, &outlen) < 0) {
         free(cluster);
         return -1;
     }
-    label->character_count = outlen;
+    memset(label->reserved, 0, sizeof(label->reserved));
+    entry += sizeof(struct exfat_entry_label);
 
-    /* Copy label entry to root directory cluster */
-    memcpy(cluster, &es.file, sizeof(struct exfat_entry_file));
+    /* Bitmap entry (offset 0x20) */
+    struct exfat_entry_bitmap *bitmap = (struct exfat_entry_bitmap *)entry;
+    bitmap->type = EXFAT_ENTRY_BITMAP;
+    memset(bitmap->reserved1, 0, sizeof(bitmap->reserved1));
+    bitmap->first_cluster = htole32(ctx->bitmap_cluster);
+    bitmap->data_length = htole64((ctx->cluster_count + 7) / 8);
+    entry += sizeof(struct exfat_entry_bitmap);
 
-    /* Create bitmap entry */
-    memset(&es, 0, sizeof(es));
-    es.file.type = EXFAT_ENTRY_BITMAP;
-    es.file.secondary_count = 1;  /* One stream entry follows */
-    es.stream.type = EXFAT_ENTRY_STREAM;
-    es.stream.first_cluster = ctx->bitmap_cluster;
-    es.stream.data_length = (ctx->cluster_count + 7) / 8;
-    es.stream.valid_data_length = es.stream.data_length;
-    
-    /* Copy bitmap entries to root directory */
-    memcpy(cluster + 32, &es.file, sizeof(struct exfat_entry_file));
-    memcpy(cluster + 64, &es.stream, sizeof(struct exfat_entry_stream));
-
-    /* Create upcase table entry */
-    memset(&es, 0, sizeof(es));
-    es.file.type = EXFAT_ENTRY_UPCASE;
-    es.file.secondary_count = 1;  /* One stream entry follows */
-    es.stream.type = EXFAT_ENTRY_STREAM;
-    es.stream.first_cluster = ctx->upcase_cluster;
-    es.stream.data_length = 5836;  /* Size of upcase table */
-    es.stream.valid_data_length = es.stream.data_length;
-    
-    /* Set timestamps for both entries */
-    struct timespec ts;
-    clock_gettime(CLOCK_REALTIME, &ts);
-    unix_time_to_exfat(&ts, &es.file.create_timestamp, &es.file.create_time_ms);
-    es.file.last_modified_timestamp = es.file.create_timestamp;
-    es.file.last_access_timestamp = es.file.create_timestamp;
-    
-    /* Copy upcase entries to root directory */
-    memcpy(cluster + 96, &es.file, sizeof(struct exfat_entry_file));
-    memcpy(cluster + 128, &es.stream, sizeof(struct exfat_entry_stream));
+    /* Upcase table entry (offset 0x60) */
+    struct exfat_entry_upcase *upcase = (struct exfat_entry_upcase *)entry;
+    upcase->type = EXFAT_ENTRY_UPCASE;
+    memset(upcase->reserved1, 0, sizeof(upcase->reserved1));
+    upcase->checksum = htole32(ctx->upcase_checksum);
+    memset(upcase->reserved2, 0, sizeof(upcase->reserved2));
+    upcase->first_cluster = htole32(ctx->upcase_cluster);
+    upcase->data_length = htole64(5836);
 
     /* Write root directory cluster */
     if (write_cluster(ctx, ctx->root_cluster, cluster) < 0) {
