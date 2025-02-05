@@ -18,6 +18,23 @@
 #ifndef _MKFS_EXFAT_H_
 #define _MKFS_EXFAT_H_
 
+#ifdef __APPLE__
+#define roundup2(x, y)  (((x)+((y)-1))&(~((y)-1)))
+#include <libkern/OSByteOrder.h>
+#define htobe16(x) OSSwapHostToBigInt16(x)
+#define htole16(x) OSSwapHostToLittleInt16(x)
+#define be16toh(x) OSSwapBigToHostInt16(x)
+#define le16toh(x) OSSwapLittleToHostInt16(x)
+#define htobe32(x) OSSwapHostToBigInt32(x)
+#define htole32(x) OSSwapHostToLittleInt32(x)
+#define be32toh(x) OSSwapBigToHostInt32(x)
+#define le32toh(x) OSSwapLittleToHostInt32(x)
+#define htobe64(x) OSSwapHostToBigInt64(x)
+#define htole64(x) OSSwapHostToLittleInt64(x)
+#define be64toh(x) OSSwapBigToHostInt64(x)
+#define le64toh(x) OSSwapLittleToHostInt64(x)
+#endif
+
 #include <sys/types.h>
 #include <sys/param.h>
 
@@ -31,6 +48,16 @@
 #define EXFAT_BOOT_SIGNATURE       0xAA55
 #define EXFAT_BOOT_CODE_SIZE       390
 #define EXFAT_BOOT_REGION_SIZE     24  /* sectors */
+
+/* Extended boot region validation pattern */
+/* Per ExFAT spec section 3.1:
+ * Two validation sectors are required in the extended boot region
+ * Each must contain a repeating pattern of 0x0E 0xD1 0x3E 0xC3
+ * This pattern helps verify boot region integrity
+ */
+#define EXFAT_BOOT_VALIDATION_PATTERN  0xC33ED10E  /* 0E D1 3E C3 */
+#define EXFAT_VALIDATION_SECTOR1   11  /* First pattern sector */
+#define EXFAT_VALIDATION_SECTOR2   23  /* Second pattern sector */
 
 /* ExFAT volume flags */
 #define EXFAT_VOL_DIRTY           0x0001
@@ -81,23 +108,24 @@ struct exfat_boot_record {
 
 /* Format context structure */
 struct mkfs_exfat_ctx {
-    const char *device;          /* Device name */
+    const char *device;          /* Device path */
     int fd;                      /* Device file descriptor */
-    uint64_t total_sectors;      /* Total sectors on device */
+    int verbose;                /* Verbose output flag */
     uint32_t bytes_per_sector;   /* Bytes per sector (usually 512) */
     uint32_t sectors_per_cluster; /* Sectors per cluster */
+    uint32_t number_of_fats;      /* Number of FATs (1 or 2) */
+    uint64_t total_sectors;      /* Total sectors on device */
+    uint32_t fat_length;         /* Length of FAT in sectors */
+    uint32_t fat_offset;         /* FAT offset in sectors */
+    uint32_t cluster_heap_offset; /* Cluster heap offset in sectors */
     uint32_t cluster_count;      /* Number of clusters */
-    uint32_t fat_sectors;        /* Sectors per FAT */
-    uint8_t number_of_fats;      /* Number of FATs (1 or 2) */
+    uint32_t bitmap_cluster;     /* First cluster of bitmap */
+    uint32_t upcase_cluster;     /* First cluster of upcase table */
+    uint32_t root_cluster;       /* First cluster of root directory */
+    uint32_t volume_serial;      /* Volume serial number */
     struct exfat_boot_record boot;  /* Boot sector */
-    uint32_t cluster_heap_offset; /* Offset to cluster heap */
-    uint32_t bitmap_cluster;    /* First cluster of bitmap */
-    uint32_t upcase_cluster;    /* First cluster of upcase table */
-    uint32_t root_cluster;      /* First cluster of root directory */
     uint32_t first_cluster;     /* First available cluster */
-    uint32_t volume_serial;     /* Volume serial number */
     const char *volume_label;   /* Volume label */
-    int verbose;                /* Verbose output */
 };
 
 /* Directory entry structures */
@@ -161,7 +189,6 @@ struct exfat_entry_label {
 };
 
 /* Function prototypes */
-int write_boot_sector(struct mkfs_exfat_ctx *ctx);
 int write_fat(struct mkfs_exfat_ctx *ctx);
 int write_root_dir(struct mkfs_exfat_ctx *ctx);
 int write_bitmap(struct mkfs_exfat_ctx *ctx);

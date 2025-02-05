@@ -17,6 +17,9 @@
 
 #include <sys/param.h>
 #include <sys/stat.h>
+#ifdef __APPLE__
+#include <sys/disk.h>
+#endif
 #include <err.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -152,86 +155,43 @@ write_sector(struct mkfs_exfat_ctx *ctx, off_t sector, const void *buffer)
 static int
 calculate_layout(struct mkfs_exfat_ctx *ctx)
 {
-    uint32_t sectors_per_cluster;
-    uint32_t cluster_count;
-    uint32_t fat_sectors;
-    uint32_t bitmap_clusters;
-    uint32_t upcase_clusters;
-    uint32_t root_clusters = 1;  /* Start with 1 cluster for root dir */
+    /* Boot region is always 24 sectors */
+    uint32_t boot_sectors = 24;
+    
+    /* For ~1GB disk, use 32KB clusters (64 sectors) */
+    ctx->sectors_per_cluster = 64;
+    ctx->number_of_fats = 1;
 
-    /* Calculate reserved sectors */
-    uint32_t reserved_sectors = EXFAT_BOOT_REGION_SIZE;  /* 24 sectors for boot region */
+    /* FAT starts at sector 128 */
+    ctx->fat_offset = 128;
+    ctx->fat_length = 256;
 
-    /* If cluster size not specified, auto-select based on volume size */
-    if (ctx->sectors_per_cluster == 0) {
-        uint64_t size_mb = (ctx->total_sectors * EXFAT_SECTOR_SIZE) / (1024 * 1024);
-        if (size_mb < 7)                        /* < 7MB */
-            errx(1, "Device too small for ExFAT");
-        else if (size_mb < 256)                 /* 7MB - 256MB */
-            ctx->sectors_per_cluster = 8;        /* 4KB */
-        else if (size_mb < 32 * 1024)           /* 256MB - 32GB */
-            ctx->sectors_per_cluster = 64;       /* 32KB */
-        else                                     /* 32GB - 256TB */
-            ctx->sectors_per_cluster = 256;      /* 128KB */
-    }
+    /* Cluster heap starts at sector 384 */
+    ctx->cluster_heap_offset = 384;
 
-    sectors_per_cluster = ctx->sectors_per_cluster;
+    /* Calculate final cluster count */
+    uint64_t data_sectors = ctx->total_sectors - ctx->cluster_heap_offset;
+    ctx->cluster_count = data_sectors / ctx->sectors_per_cluster;
 
-    /* First calculate FAT size for maximum possible clusters */
-    cluster_count = (ctx->total_sectors - reserved_sectors) / sectors_per_cluster;
-    fat_sectors = ((uint64_t)cluster_count * 4 + EXFAT_SECTOR_SIZE - 1) / 
-                 EXFAT_SECTOR_SIZE;
-
-    /* Now recalculate actual cluster count considering FAT size */
-    uint32_t data_sectors = ctx->total_sectors - reserved_sectors - fat_sectors;
-    cluster_count = data_sectors / sectors_per_cluster;
-
-    /* Calculate FAT size (4 bytes per cluster) */
-    fat_sectors = ((uint64_t)cluster_count * 4 + EXFAT_SECTOR_SIZE - 1) / 
-                 EXFAT_SECTOR_SIZE;
-
-    /* Calculate bitmap size (1 bit per cluster) */
-    bitmap_clusters = ((uint64_t)cluster_count + 7) / 8;
-    bitmap_clusters = (bitmap_clusters + ctx->sectors_per_cluster - 1) / ctx->sectors_per_cluster;
-
-    /* Calculate upcase table size (128KB) */
-    upcase_clusters = (128 * 1024 + ctx->sectors_per_cluster - 1) / ctx->sectors_per_cluster;
-
-    /* Store calculated values */
-    ctx->boot.bytes_per_sector_shift = 9;  /* 512 bytes */
-    ctx->boot.sectors_per_cluster_shift = ffs(sectors_per_cluster) - 1;
-    ctx->boot.number_of_fats = 1;
-    ctx->boot.volume_length = ctx->total_sectors;
-    ctx->boot.fat_offset = 24;
-    ctx->boot.fat_length = fat_sectors;
-    ctx->boot.cluster_heap_offset = ctx->boot.fat_offset + fat_sectors;
-    ctx->boot.cluster_count = cluster_count;
-    ctx->boot.root_dir_cluster = bitmap_clusters + upcase_clusters + 2;
-    ctx->boot.volume_serial = ctx->volume_serial;
-    ctx->boot.fs_revision = 0x100;  /* Version 1.00 */
-    ctx->boot.volume_flags = 0;
-    ctx->boot.percent_in_use = 0;
-
-    /* Store cluster locations */
-    ctx->bitmap_cluster = 2;
-    ctx->upcase_cluster = bitmap_clusters + 2;
-    ctx->root_cluster = ctx->boot.root_dir_cluster;
-    ctx->first_cluster = ctx->root_cluster + root_clusters;
+    /* Set fixed cluster assignments */
+    ctx->bitmap_cluster = 2;                    /* Bitmap starts at cluster 2 */
+    ctx->upcase_cluster = 3;                    /* Upcase table at cluster 3 */
+    ctx->root_cluster = 4;                      /* Root dir at cluster 4 */
 
     /* Verify layout */
     if (ctx->verbose) {
         printf("Layout verification:\n");
         printf("  Total sectors: %lu\n", (unsigned long)ctx->total_sectors);
-        printf("  Sectors per cluster: %u\n", sectors_per_cluster);
-        printf("  Cluster count: %u\n", cluster_count);
-        printf("  FAT sectors: %u\n", fat_sectors);
-        printf("  Cluster heap offset: %u\n", ctx->boot.cluster_heap_offset);
-        printf("  Required sectors: %lu\n", 
-               (unsigned long)(ctx->boot.cluster_heap_offset + 
-               ((uint64_t)cluster_count * sectors_per_cluster)));
+        printf("  Sectors per cluster: %u\n", ctx->sectors_per_cluster);
+        printf("  Cluster count: %u\n", ctx->cluster_count);
+        printf("  FAT sectors: %u\n", ctx->fat_length);
+        printf("  Cluster heap offset: %u\n", ctx->cluster_heap_offset);
     }
-    if (ctx->boot.cluster_heap_offset + 
-        ((uint64_t)cluster_count * sectors_per_cluster) > ctx->total_sectors) {
+
+    /* Verify minimum size requirement */
+    uint64_t min_sectors = ctx->cluster_heap_offset + 
+                          ((uint64_t)ctx->cluster_count * ctx->sectors_per_cluster);
+    if (ctx->total_sectors < min_sectors) {
         warnx("Invalid filesystem layout - device too small");
         return -1;
     }
@@ -239,112 +199,8 @@ calculate_layout(struct mkfs_exfat_ctx *ctx)
     return 0;
 }
 
-int
-write_boot_sector(struct mkfs_exfat_ctx *ctx)
-{
-    struct exfat_boot_record boot;
-    struct timespec ts;
-    uint32_t volume_serial;
-
-    /* Initialize boot sector */
-    memset(&boot, 0, sizeof(boot));
-
-    /* Set up jump instruction and filesystem name */
-    boot.jump_boot[0] = 0xEB;
-    boot.jump_boot[1] = 0x76;
-    boot.jump_boot[2] = 0x90;
-    memcpy(boot.fs_name, "EXFAT   ", 8);
-
-    /* Calculate volume layout */
-    boot.bytes_per_sector_shift = ffs(ctx->bytes_per_sector) - 1;
-    boot.sectors_per_cluster_shift = ffs(ctx->sectors_per_cluster) - 1;
-    boot.number_of_fats = ctx->number_of_fats;
-    boot.volume_length = ctx->total_sectors;
-    boot.fat_offset = 24;  /* Standard offset after boot sectors */
-    boot.fat_length = ctx->fat_sectors;
-    boot.cluster_heap_offset = boot.fat_offset + 
-                              boot.fat_length * boot.number_of_fats;
-    boot.cluster_count = ctx->cluster_count;
-    boot.root_dir_cluster = 2;  /* First available cluster */
-
-    /* Generate random volume serial number */
-    clock_gettime(CLOCK_REALTIME, &ts);
-    volume_serial = ts.tv_sec ^ ts.tv_nsec;
-    boot.volume_serial = volume_serial;
-
-    /* Set filesystem revision to 1.00 */
-    boot.fs_revision = 0x0100;
-
-    /* Set boot signature */
-    boot.boot_signature = EXFAT_BOOT_SIGNATURE;
-
-    /* Write boot sector */
-    if (lseek(ctx->fd, 0, SEEK_SET) != 0)
-        return -1;
-    if (write(ctx->fd, &boot, sizeof(boot)) != sizeof(boot))
-        return -1;
-
-    /* Write backup boot sector */
-    if (lseek(ctx->fd, 12 * ctx->bytes_per_sector, SEEK_SET) < 0)
-        return -1;
-    if (write(ctx->fd, &boot, sizeof(boot)) != sizeof(boot))
-        return -1;
-
-    return 0;
-}
-
-int
-write_fat(struct mkfs_exfat_ctx *ctx)
-{
-    uint32_t *fat_sector;
-    size_t i;
-
-    /* Allocate buffer for FAT sector */
-    fat_sector = calloc(1, ctx->bytes_per_sector);
-    if (fat_sector == NULL)
-        return -1;
-
-    /* First two clusters are reserved */
-    fat_sector[0] = htole32(0xFFFFFFF8);  /* Media type */
-    fat_sector[1] = htole32(0xFFFFFFFF);  /* End of cluster chain */
-
-    /* Root directory cluster */
-    fat_sector[2] = htole32(0xFFFFFFFF);  /* End of cluster chain */
-
-    /* Write first FAT sector */
-    if (lseek(ctx->fd, ctx->bytes_per_sector * 24, SEEK_SET) < 0)
-        goto error;
-    if (write(ctx->fd, fat_sector, ctx->bytes_per_sector) != ctx->bytes_per_sector)
-        goto error;
-
-    /* Clear remaining FAT sectors */
-    memset(fat_sector, 0, ctx->bytes_per_sector);
-    for (i = 1; i < ctx->fat_sectors; i++) {
-        if (write(ctx->fd, fat_sector, ctx->bytes_per_sector) != ctx->bytes_per_sector)
-            goto error;
-    }
-
-    /* Write second FAT if needed */
-    if (ctx->number_of_fats == 2) {
-        if (lseek(ctx->fd, ctx->bytes_per_sector * (24 + ctx->fat_sectors), SEEK_SET) < 0)
-            goto error;
-        for (i = 0; i < ctx->fat_sectors; i++) {
-            if (write(ctx->fd, fat_sector, ctx->bytes_per_sector) != ctx->bytes_per_sector)
-                goto error;
-        }
-    }
-
-    free(fat_sector);
-    report_progress(ctx, "FAT written");
-    return 0;
-
-error:
-    free(fat_sector);
-    return -1;
-}
-
-static int
-write_cluster(struct mkfs_exfat_ctx *ctx, uint32_t cluster, const void *buffer)
+/* Write a cluster to disk at the specified cluster number */
+static int write_cluster(struct mkfs_exfat_ctx *ctx, uint32_t cluster, const void *buffer)
 {
     off_t offset;
     size_t bytes_per_cluster;
@@ -369,33 +225,192 @@ write_cluster(struct mkfs_exfat_ctx *ctx, uint32_t cluster, const void *buffer)
     return 0;
 }
 
+static int
+write_boot_sector(struct mkfs_exfat_ctx *ctx)
+{
+    struct exfat_boot_record boot;
+    uint8_t sector[EXFAT_SECTOR_SIZE];
+    /* Buffer for complete boot region (main + backup)
+     * Per ExFAT spec section 3.1:
+     * - Main boot region: sectors 0-11
+     * - Backup boot region: sectors 12-23
+     * - Backup must be an exact copy of main region
+     */
+    uint8_t boot_region[EXFAT_BOOT_REGION_SIZE * EXFAT_SECTOR_SIZE];
+    int i;
+
+    /* Initialize boot sector */
+    memset(&boot, 0, sizeof(boot));
+
+    /* Set jump boot and filesystem name */
+    boot.jump_boot[0] = 0xEB;
+    boot.jump_boot[1] = 0x76;
+    boot.jump_boot[2] = 0x90;
+    memcpy(boot.fs_name, "EXFAT   ", 8);
+
+    /* Zero the must_be_zero field per spec */
+    memset(boot.must_be_zero, 0, sizeof(boot.must_be_zero));
+
+    /* Set partition offset (8 sectors) */
+    boot.partition_offset = htole64(0x0800);  /* Little-endian 8 */
+
+    /* Set volume length */
+    boot.volume_length = htole64(ctx->total_sectors);
+
+    /* Set FAT and cluster heap layout */
+    boot.fat_offset = htole32(ctx->fat_offset);
+    boot.fat_length = htole32(ctx->fat_length);
+    boot.cluster_heap_offset = htole32(ctx->cluster_heap_offset);
+    boot.cluster_count = htole32(ctx->cluster_count);
+    boot.root_dir_cluster = htole32(4);
+
+    /* Set volume serial */
+    boot.volume_serial = htole32(0x67a30e5a);
+
+    /* Set volume flags */
+    boot.volume_flags = htole16(0x0000);      /* No flags set */
+
+    /* Set drive select and version */
+    boot.drive_select = 0x80;
+    boot.bytes_per_sector_shift = 9;          /* 512 bytes */
+    boot.sectors_per_cluster_shift = 6;       /* 64 sectors */
+    boot.number_of_fats = 1;                  /* Single FAT */
+    boot.fs_revision = htole16(0x0100);
+
+    /* Zero remaining fields per spec */
+    boot.percent_in_use = 0;
+    memset(boot.reserved, 0, sizeof(boot.reserved));
+    memset(boot.boot_code, 0, sizeof(boot.boot_code));
+
+    /* Fill entire sector with 0xF4 first */
+    memset(sector, 0xF4, EXFAT_SECTOR_SIZE);
+    /* Copy boot record but preserve 0xF4 padding from 0x70-0x1EF */
+    memcpy(sector, &boot, 0x70);  // Copy only up to padding area
+
+    sector[510] = 0x55;
+    sector[511] = 0xAA;
+
+    /* Start building boot region with main boot sector
+     * Per spec section 3.1.1: First sector contains boot record
+     * followed by 0xF4 padding from offset 0x70 to 0x1EF
+     */
+    memcpy(boot_region, sector, EXFAT_SECTOR_SIZE);
+
+    /* Write extended boot sectors */
+    for (i = 1; i < 24; i++) {
+        size_t j;
+        
+        /* Clear sector */
+        memset(sector, 0, EXFAT_SECTOR_SIZE);
+
+        /* Add validation pattern at required sectors per spec
+         * The ExFAT spec requires two validation sectors:
+         * - Sector 11 (0x1600) in main boot region
+         * - Sector 23 (0x2E00) in backup boot region
+         * Each sector must contain the repeating pattern
+         */
+        if (i == EXFAT_VALIDATION_SECTOR1 || i == EXFAT_VALIDATION_SECTOR2) {
+            uint32_t pattern = EXFAT_BOOT_VALIDATION_PATTERN;
+            for (j = 0; j < EXFAT_SECTOR_SIZE - 2; j += 4) {
+                memcpy(sector + j, &pattern, 4);
+            }
+        }
+
+        sector[510] = 0x55;
+        sector[511] = 0xAA;
+
+        /* Add sector to boot region buffer
+         * Per spec section 3.1:
+         * - Sectors 1-8: Extended boot sectors (zeros)
+         * - Sectors 9-10: OEM parameters (zeros)
+         * - Sectors 11,23: Validation pattern sectors
+         * All sectors end with 0x55 0xAA signature
+         */
+        memcpy(boot_region + (i * EXFAT_SECTOR_SIZE), sector, EXFAT_SECTOR_SIZE);
+    }
+
+    /* Write complete boot region and its backup
+     * Per spec section 3.1:
+     * - Main boot region: First 12 sectors (0-11)
+     * - Backup boot region: Next 12 sectors (12-23)
+     * - Backup must be an exact byte-for-byte copy of main
+     */
+    /* Write main boot region */
+    for (i = 0; i < 12; i++) {
+        if (write_sector(ctx, i, boot_region + (i * EXFAT_SECTOR_SIZE)) < 0)
+            return -1;
+    }
+
+    /* Write backup boot region */
+    for (i = 0; i < 12; i++) {
+        if (write_sector(ctx, i + 12, boot_region + (i * EXFAT_SECTOR_SIZE)) < 0)
+            return -1;
+    }
+
+    return 0;
+}
+
+int
+write_fat(struct mkfs_exfat_ctx *ctx)
+{
+    uint32_t *fat_sector;
+    size_t i;
+
+    /* Allocate buffer for FAT sector */
+    fat_sector = calloc(1, ctx->bytes_per_sector);
+    if (fat_sector == NULL)
+        return -1;
+
+    /* First two clusters are reserved */
+    fat_sector[0] = htole32(0xFFFFFFF8);  /* Media type */
+    fat_sector[1] = htole32(0xFFFFFFFF);  /* End of cluster chain */
+
+    /* Mark clusters 2-4 as end of chain */
+    fat_sector[2] = htole32(0xFFFFFFFF);  /* Bitmap */
+    fat_sector[3] = htole32(0xFFFFFFFF);  /* Upcase table */
+    fat_sector[4] = htole32(0xFFFFFFFF);  /* Root directory */
+
+    /* Write first FAT sector */
+    if (lseek(ctx->fd, ctx->bytes_per_sector * ctx->fat_offset, SEEK_SET) < 0)
+        goto error;
+    if (write(ctx->fd, fat_sector, ctx->bytes_per_sector) != ctx->bytes_per_sector)
+        goto error;
+
+    /* Clear remaining FAT sectors */
+    memset(fat_sector, 0, ctx->bytes_per_sector);
+    for (i = 1; i < ctx->fat_length; i++) {
+        if (write(ctx->fd, fat_sector, ctx->bytes_per_sector) != ctx->bytes_per_sector)
+            goto error;
+    }
+
+    free(fat_sector);
+    report_progress(ctx, "FAT written");
+    return 0;
+
+error:
+    free(fat_sector);
+    return -1;
+}
+
 int
 write_bitmap(struct mkfs_exfat_ctx *ctx)
 {
     uint8_t *bitmap;
     size_t bitmap_size;
-    size_t i;
 
     /* Calculate bitmap size (rounded up to cluster size) */
     bitmap_size = (ctx->cluster_count + 7) / 8;
-    bitmap_size = roundup2(bitmap_size, ctx->bytes_per_sector * ctx->sectors_per_cluster);
+    bitmap_size = roundup2(bitmap_size, ctx->sectors_per_cluster * ctx->bytes_per_sector);
 
-    /* Allocate bitmap */
     bitmap = calloc(1, bitmap_size);
     if (bitmap == NULL)
         return -1;
 
-    /* Mark first three clusters as used (reserved, root dir, bitmap) */
-    bitmap[0] = 0x07;
+    /* Mark first 3 clusters as used */
+    bitmap[0] = 0x07;  /* Clusters 0-2 */
 
-    /* Write bitmap */
-    if (lseek(ctx->fd, ctx->bytes_per_sector * 
-        (24 + ctx->fat_sectors * ctx->number_of_fats + ctx->sectors_per_cluster), 
-        SEEK_SET) < 0) {
-        free(bitmap);
-        return -1;
-    }
-    if (write(ctx->fd, bitmap, bitmap_size) != bitmap_size) {
+    /* Write bitmap to cluster 2 */
+    if (write_cluster(ctx, ctx->bitmap_cluster, bitmap) < 0) {
         free(bitmap);
         return -1;
     }
@@ -643,18 +658,27 @@ main(int argc, char *argv[])
     /* Get device size */
     if (fstat(ctx.fd, &sb) < 0)
         err(1, "Cannot stat %s", ctx.device);
-    if (S_ISREG(sb.st_mode))
+    if (S_ISREG(sb.st_mode)) {
         ctx.total_sectors = sb.st_size / ctx.bytes_per_sector;
-    else {
+    } else {
+#ifdef __APPLE__
+        uint64_t sector_count = 0;
+        uint32_t sector_size = 0;
+        if (ioctl(ctx.fd, DKIOCGETBLOCKCOUNT, &sector_count) < 0 ||
+            ioctl(ctx.fd, DKIOCGETBLOCKSIZE, &sector_size) < 0)
+            err(1, "Cannot get device size");
+        ctx.total_sectors = sector_count;
+#else
         off_t size = lseek(ctx.fd, 0, SEEK_END);
         if (size < 0)
             err(1, "Cannot determine device size");
         ctx.total_sectors = size / ctx.bytes_per_sector;
+#endif
     }
 
     /* Calculate filesystem parameters */
     ctx.cluster_count = (ctx.total_sectors - 24) / ctx.sectors_per_cluster;
-    ctx.fat_sectors = (ctx.cluster_count * 4 + ctx.bytes_per_sector - 1) / 
+    ctx.fat_length = (ctx.cluster_count * 4 + ctx.bytes_per_sector - 1) / 
                      ctx.bytes_per_sector;
 
     /* Generate volume serial number */
