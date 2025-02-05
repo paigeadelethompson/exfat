@@ -205,20 +205,28 @@ print_progress(struct fsck_exfat_ctx *ctx, const char *phase, uint32_t current, 
 int
 check_boot_sector(struct fsck_exfat_ctx *ctx)
 {
-    uint8_t boot_region[EXFAT_SECTOR_SIZE * 11];
+    uint8_t boot_region[EXFAT_SECTOR_SIZE * 12];  // Read all 12 sectors
     uint32_t calculated_checksum, stored_checksum;
     int error;
 
-    error = read_sector(ctx, 0, boot_region);
-    if (error)
-        return -1;
+    // Read all 12 sectors
+    for (int i = 0; i < 12; i++) {
+        error = read_sector(ctx, i, boot_region + (i * EXFAT_SECTOR_SIZE));
+        if (error)
+            return -1;
+    }
 
-    calculated_checksum = calculate_boot_checksum(ctx, boot_region, sizeof(boot_region));
+    // Calculate checksum over first 11 sectors only
+    calculated_checksum = calculate_boot_checksum(ctx, boot_region, EXFAT_SECTOR_SIZE * 11);
     stored_checksum = *(uint32_t *)(boot_region + 0x6A);
 
-    if (calculated_checksum != stored_checksum) {
-        report_error(ctx, FSCK_ERR_FATAL, "Invalid boot region checksum");
-        return -1;
+    // Verify checksum is repeated throughout sector 12
+    uint32_t *checksum_sector = (uint32_t *)(boot_region + EXFAT_SECTOR_SIZE * 11);
+    for (size_t i = 0; i < EXFAT_SECTOR_SIZE / 4; i++) {
+        if (le32toh(checksum_sector[i]) != calculated_checksum) {
+            report_error(ctx, FSCK_ERR_FATAL, "Invalid checksum in boot checksum sector");
+            return -1;
+        }
     }
 
     log_info(ctx, DEBUG_BASIC, "Checking boot sector...");
@@ -2055,21 +2063,9 @@ calculate_boot_checksum(struct fsck_exfat_ctx *ctx, const void *boot_region, siz
         printf("\n");
     }
 
-    /* Print key fields at medium verbosity */
-    if (ctx->verbose >= DEBUG_DETAIL) {
-        printf("Boot region size: %zu bytes\n", size);
-        printf("Jump boot: %02x %02x %02x\n", p[0], p[1], p[2]);
-        printf("Checksum field at 0x6A: %02x %02x %02x %02x\n",
-               p[0x6A], p[0x6B], p[0x6C], p[0x6D]);
-    }
-
     for (i = 0; i < size; i++) {
-        /* Skip first 3 bytes (jump_boot) */
-        if (i < 3)
-            continue;
-            
-        /* Skip checksum field */
-        if (i >= 0x6A && i < 0x6E)
+        /* Skip VolumeFlags and PercentInUse fields */
+        if (i == 106 || i == 107 || i == 112)
             continue;
             
         checksum = ((checksum << 31) | (checksum >> 1)) + p[i];
@@ -2078,10 +2074,6 @@ calculate_boot_checksum(struct fsck_exfat_ctx *ctx, const void *boot_region, siz
         if (ctx->verbose >= DEBUG_DUMP && i % 512 == 0)
             printf("Checksum after byte 0x%04zx: %08x\n", i, checksum);
     }
-
-    /* Print final checksum at medium verbosity */
-    if (ctx->verbose >= DEBUG_DETAIL)
-        printf("Final calculated checksum: %08x\n", checksum);
 
     return checksum;
 } 
