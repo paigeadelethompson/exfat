@@ -86,7 +86,7 @@ struct exfat_boot_record {
     uint8_t  jump_boot[3];         /* Boot strap short or near jump */
     uint8_t  fs_name[8];           /* "EXFAT   " */
     uint8_t  must_be_zero[53];     /* Zero field */
-    uint64_t partition_offset;      /* Partition offset in sectors */
+    uint16_t partition_offset[4];   /* Partition offset in sectors (LE) */
     uint64_t volume_length;        /* Volume length in sectors */
     uint32_t fat_offset;           /* FAT offset in sectors */
     uint32_t fat_length;           /* FAT length in sectors */

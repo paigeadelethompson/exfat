@@ -242,13 +242,19 @@ write_boot_sector(struct mkfs_exfat_ctx *ctx)
     /* Initialize entire boot region to zeros */
     memset(boot_region, 0, sizeof(boot_region));
 
-    /* Set boot signatures for all sectors in main boot region
-     * Per spec section 3.1: All boot sectors must end with 0x55 0xAA
+    /* Set boot signatures for required sectors
+     * Per spec section 3.1:
+     * - Main boot sector (0) and extended boot sectors (1-8) need signatures
+     * - OEM Parameter sectors (9-10) should be all zeros
+     * - Validation pattern sectors (11) needs signature
      */
-    for (i = 0; i < EXFAT_BOOT_REGION_SIZE; i++) {
+    for (i = 0; i < 9; i++) {
         boot_region[i * EXFAT_SECTOR_SIZE + 510] = 0x55;
         boot_region[i * EXFAT_SECTOR_SIZE + 511] = 0xAA;
     }
+    /* Add signature to validation pattern sector */
+    boot_region[11 * EXFAT_SECTOR_SIZE + 510] = 0x55;
+    boot_region[11 * EXFAT_SECTOR_SIZE + 511] = 0xAA;
 
     /* Set 0xF4 padding for boot sector per spec section 3.1.1 */
     memset(boot_region + 0x70, 0, 8);
@@ -267,7 +273,10 @@ write_boot_sector(struct mkfs_exfat_ctx *ctx)
     memset(boot.must_be_zero, 0, sizeof(boot.must_be_zero));
 
     /* Set partition offset (8 sectors) */
-    boot.partition_offset = htole64(8);  /* Per spec: 8 sectors */
+    boot.partition_offset[0] = htole16(0x0800);  /* 8 sectors in LE format */
+    boot.partition_offset[1] = 0;
+    boot.partition_offset[2] = 0;
+    boot.partition_offset[3] = 0;
 
     /* Set volume length */
     boot.volume_length = htole64(ctx->total_sectors);
