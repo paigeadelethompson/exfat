@@ -41,6 +41,9 @@ struct cluster_info {
 static int get_fat_entry(struct fsck_exfat_ctx *ctx, uint32_t cluster, uint32_t *value);
 static int validate_cluster_number(struct fsck_exfat_ctx *ctx, uint32_t cluster, const char *desc);
 
+/* Add near the top with other function prototypes */
+static uint32_t calculate_boot_checksum(struct fsck_exfat_ctx *ctx, const void *boot_region, size_t size);
+
 static void
 usage(void)
 {
@@ -167,12 +170,18 @@ write_fat_entry(struct fsck_exfat_ctx *ctx, uint32_t cluster, uint32_t value)
     return error;
 }
 
+/* Near the top with other defines */
+#define DEBUG_BASIC   1  /* Basic info (-v) */
+#define DEBUG_DETAIL  2  /* Detailed info (-vv) */
+#define DEBUG_DUMP    3  /* Full hex dumps (-vvv) */
+
+/* Update log_info to handle verbosity levels */
 static void
-log_info(struct fsck_exfat_ctx *ctx, const char *fmt, ...)
+log_info(struct fsck_exfat_ctx *ctx, int level, const char *fmt, ...)
 {
     va_list ap;
     
-    if (!ctx->verbose)
+    if (ctx->verbose < level)
         return;
         
     va_start(ap, fmt);
@@ -196,9 +205,24 @@ print_progress(struct fsck_exfat_ctx *ctx, const char *phase, uint32_t current, 
 int
 check_boot_sector(struct fsck_exfat_ctx *ctx)
 {
-    log_info(ctx, "Checking boot sector...");
-    struct exfat_boot_sector boot;
+    uint8_t boot_region[EXFAT_SECTOR_SIZE * 11];
+    uint32_t calculated_checksum, stored_checksum;
     int error;
+
+    error = read_sector(ctx, 0, boot_region);
+    if (error)
+        return -1;
+
+    calculated_checksum = calculate_boot_checksum(ctx, boot_region, sizeof(boot_region));
+    stored_checksum = *(uint32_t *)(boot_region + 0x6A);
+
+    if (calculated_checksum != stored_checksum) {
+        report_error(ctx, FSCK_ERR_FATAL, "Invalid boot region checksum");
+        return -1;
+    }
+
+    log_info(ctx, DEBUG_BASIC, "Checking boot sector...");
+    struct exfat_boot_sector boot;
 
     error = read_sector(ctx, 0, &boot);
     if (error)
@@ -257,11 +281,11 @@ check_boot_sector(struct fsck_exfat_ctx *ctx)
     if (error)
         return -1;
 
-    log_info(ctx, "Boot sector OK");
-    log_info(ctx, "  Bytes per sector: %u", 1 << ctx->emp->boot.bytes_per_sector_shift);
-    log_info(ctx, "  Sectors per cluster: %u", 1 << ctx->emp->boot.sectors_per_cluster_shift);
-    log_info(ctx, "  Total clusters: %u", ctx->emp->boot.cluster_count);
-    log_info(ctx, "  Volume size: %llu MB", 
+    log_info(ctx, DEBUG_BASIC, "Boot sector OK");
+    log_info(ctx, DEBUG_BASIC, "  Bytes per sector: %u", 1 << ctx->emp->boot.bytes_per_sector_shift);
+    log_info(ctx, DEBUG_BASIC, "  Sectors per cluster: %u", 1 << ctx->emp->boot.sectors_per_cluster_shift);
+    log_info(ctx, DEBUG_BASIC, "  Total clusters: %u", ctx->emp->boot.cluster_count);
+    log_info(ctx, DEBUG_BASIC, "  Volume size: %llu MB", 
         ((uint64_t)ctx->emp->boot.cluster_count * 
          (1 << ctx->emp->boot.sectors_per_cluster_shift) * 
          (1 << ctx->emp->boot.bytes_per_sector_shift)) / (1024 * 1024));
@@ -395,7 +419,7 @@ write_bitmap_sector(struct fsck_exfat_ctx *ctx, off_t sector, uint8_t *buffer)
 int
 check_fat(struct fsck_exfat_ctx *ctx)
 {
-    log_info(ctx, "Checking File Allocation Table...");
+    log_info(ctx, DEBUG_BASIC, "Checking File Allocation Table...");
     uint32_t *fat_sector;
     uint32_t total_sectors;
     uint32_t i;
@@ -490,7 +514,7 @@ out:
     free(fat_sector);
     if (ctx->verbose)
         printf("\n");
-    log_info(ctx, "FAT check complete");
+    log_info(ctx, DEBUG_BASIC, "FAT check complete");
     return error;
 }
 
@@ -957,7 +981,7 @@ check_directory(struct fsck_exfat_ctx *ctx, uint32_t cluster)
     depth++;
     
     if (depth == 1)
-        log_info(ctx, "Checking directory structure...");
+        log_info(ctx, DEBUG_BASIC, "Checking directory structure...");
     else if (ctx->verbose)
         printf("%*sChecking directory at cluster %u...\n", depth*2, "", cluster);
     
@@ -1134,7 +1158,7 @@ check_root_dir(struct fsck_exfat_ctx *ctx)
 int
 check_bitmap(struct fsck_exfat_ctx *ctx)
 {
-    log_info(ctx, "Checking allocation bitmap...");
+    log_info(ctx, DEBUG_BASIC, "Checking allocation bitmap...");
     uint8_t *bitmap_sector = NULL;
     uint32_t total_clusters = ctx->emp->boot.cluster_count;
     uint32_t bitmap_sectors = (total_clusters + 7) / 8 / EXFAT_SECTOR_SIZE;
@@ -1205,7 +1229,7 @@ check_bitmap(struct fsck_exfat_ctx *ctx)
     if (ctx->verbose)
         printf("\n");
         
-    log_info(ctx, "Bitmap check complete");
+    log_info(ctx, DEBUG_BASIC, "Bitmap check complete");
     out:
     free(bitmap_sector);
     return error;
@@ -1214,7 +1238,7 @@ check_bitmap(struct fsck_exfat_ctx *ctx)
 static int
 recover_lost_clusters(struct fsck_exfat_ctx *ctx)
 {
-    log_info(ctx, "Checking for lost clusters...");
+    log_info(ctx, DEBUG_BASIC, "Checking for lost clusters...");
     uint32_t *fat_sector = NULL;
     uint8_t *bitmap_sector = NULL;
     struct cluster_info *cluster_map = NULL;
@@ -1304,9 +1328,9 @@ recover_lost_clusters(struct fsck_exfat_ctx *ctx)
         printf("\n");
         
     if (lost_count > 0)
-        log_info(ctx, "Recovery complete - recovered %u lost clusters", lost_count);
+        log_info(ctx, DEBUG_BASIC, "Recovery complete - recovered %u lost clusters", lost_count);
     else
-        log_info(ctx, "No lost clusters found");
+        log_info(ctx, DEBUG_BASIC, "No lost clusters found");
         
     out:
     /* Clean up in reverse order of allocation */
@@ -1417,7 +1441,7 @@ create_lost_file(struct fsck_exfat_ctx *ctx, uint32_t cluster)
 int
 check_upcase_table(struct fsck_exfat_ctx *ctx)
 {
-    log_info(ctx, "Checking upcase table...");
+    log_info(ctx, DEBUG_BASIC, "Checking upcase table...");
     uint8_t *buffer = NULL;
     uint32_t sector;
     uint32_t checksum = 0;
@@ -1546,7 +1570,7 @@ check_upcase_table(struct fsck_exfat_ctx *ctx)
     if (ctx->verbose)
         printf("\n");
         
-    log_info(ctx, "Upcase table check complete");
+    log_info(ctx, DEBUG_BASIC, "Upcase table check complete");
     free(buffer);
     return error;
 
@@ -1791,44 +1815,49 @@ unix_time_to_exfat(const struct timespec *ts, uint32_t *date, uint32_t *time)
 int
 exfat_utf8_to_utf16(const char *utf8, uint16_t *utf16, size_t maxout, size_t *lenout)
 {
+    const uint8_t *src = (const uint8_t *)utf8;
     size_t len = 0;
     uint32_t codepoint;
-    const uint8_t *s = (const uint8_t *)utf8;
 
-    while (*s && len < maxout) {
-        /* Decode UTF-8 sequence */
-        if ((*s & 0x80) == 0) {
-            /* 1-byte sequence */
-            codepoint = *s++;
-        } else if ((*s & 0xE0) == 0xC0) {
-            /* 2-byte sequence */
-            if ((s[1] & 0xC0) != 0x80)
+    while (*src && len < maxout) {
+        /* Single byte - ASCII */
+        if (*src < 0x80) {
+            codepoint = *src++;
+        }
+        /* 2-byte sequence */
+        else if ((*src & 0xE0) == 0xC0) {
+            if ((src[1] & 0xC0) != 0x80)
                 return -1;
-            codepoint = ((*s & 0x1F) << 6) | (s[1] & 0x3F);
-            s += 2;
-        } else if ((*s & 0xF0) == 0xE0) {
-            /* 3-byte sequence */
-            if ((s[1] & 0xC0) != 0x80 || (s[2] & 0xC0) != 0x80)
+            codepoint = ((src[0] & 0x1F) << 6) | 
+                        (src[1] & 0x3F);
+            src += 2;
+        }
+        /* 3-byte sequence */
+        else if ((*src & 0xF0) == 0xE0) {
+            if ((src[1] & 0xC0) != 0x80 || 
+                (src[2] & 0xC0) != 0x80)
                 return -1;
-            codepoint = ((*s & 0x0F) << 12) |
-                       ((s[1] & 0x3F) << 6) |
-                       (s[2] & 0x3F);
-            s += 3;
-        } else {
-            /* Invalid sequence */
-            return -1;
+            codepoint = ((src[0] & 0x0F) << 12) |
+                       ((src[1] & 0x3F) << 6)  |
+                        (src[2] & 0x3F);
+            src += 3;
+        }
+        else {
+            return -1;  /* Invalid UTF-8 sequence */
         }
 
-        /* Encode as UTF-16 */
+        /* Convert to UTF-16 */
         if (codepoint < 0x10000) {
             utf16[len++] = htole16(codepoint);
-        } else if (codepoint < 0x110000 && len + 1 < maxout) {
+        }
+        else if (codepoint < 0x110000 && len + 1 < maxout) {
             /* Surrogate pair */
             codepoint -= 0x10000;
             utf16[len++] = htole16(0xD800 | (codepoint >> 10));
             utf16[len++] = htole16(0xDC00 | (codepoint & 0x3FF));
-        } else {
-            return -1;
+        }
+        else {
+            return -1;  /* Invalid Unicode codepoint */
         }
     }
 
@@ -1861,7 +1890,7 @@ main(int argc, char *argv[])
             break;
         case 'v':
             /* Be verbose */
-            ctx.verbose = 1;
+            ctx.verbose++;  /* Each -v increases verbosity */
             break;
         case 'y':
             /* Fix errors without asking */
@@ -1883,10 +1912,12 @@ main(int argc, char *argv[])
     if (ctx.fd < 0)
         err(1, "Cannot open %s", ctx.device);
 
-    log_info(&ctx, "Starting ExFAT filesystem check on %s", ctx.device);
-    log_info(&ctx, "Options: %s%s%s", 
+    log_info(&ctx, DEBUG_BASIC, "Starting ExFAT filesystem check on %s", ctx.device);
+    log_info(&ctx, DEBUG_BASIC, "Options: %s%s%s", 
              ctx.fix_errors ? "auto-repair " : "",
-             ctx.verbose ? "verbose " : "",
+             ctx.verbose ? (ctx.verbose == 1 ? "verbose " :
+                           ctx.verbose == 2 ? "very verbose " :
+                           "debug ") : "",
              (!ctx.fix_errors && !ctx.verbose) ? "read-only" : "");
     
     /* Check filesystem structures */
@@ -1920,14 +1951,14 @@ main(int argc, char *argv[])
         goto error;
     }
 
-    log_info(&ctx, "Filesystem check complete");
+    log_info(&ctx, DEBUG_BASIC, "Filesystem check complete");
     if (ctx.modified)
-        log_info(&ctx, "Filesystem was modified");
+        log_info(&ctx, DEBUG_BASIC, "Filesystem was modified");
     if (ctx.errors)
-        log_info(&ctx, "Found and %s %d errors", 
+        log_info(&ctx, DEBUG_BASIC, "Found and %s %d errors", 
                  ctx.fix_errors ? "fixed" : "found", ctx.errors);
     else
-        log_info(&ctx, "No errors found");
+        log_info(&ctx, DEBUG_BASIC, "No errors found");
 
     /* Clean up */
     close(ctx.fd);
@@ -2004,4 +2035,53 @@ validate_cluster_number(struct fsck_exfat_ctx *ctx, uint32_t cluster, const char
         return -1;
     }
     return 0;
+}
+
+static uint32_t
+calculate_boot_checksum(struct fsck_exfat_ctx *ctx, const void *boot_region, size_t size)
+{
+    const uint8_t *p = boot_region;
+    uint32_t checksum = 0;
+    size_t i;
+
+    /* Print boot region dump at highest verbosity */
+    if (ctx->verbose >= DEBUG_DUMP) {
+        printf("Boot region contents:\n");
+        for (i = 0; i < size; i++) {
+            if (i % 16 == 0)
+                printf("%04zx: ", i);
+            printf("%02x%s", p[i], (i + 1) % 16 ? " " : "\n");
+        }
+        printf("\n");
+    }
+
+    /* Print key fields at medium verbosity */
+    if (ctx->verbose >= DEBUG_DETAIL) {
+        printf("Boot region size: %zu bytes\n", size);
+        printf("Jump boot: %02x %02x %02x\n", p[0], p[1], p[2]);
+        printf("Checksum field at 0x6A: %02x %02x %02x %02x\n",
+               p[0x6A], p[0x6B], p[0x6C], p[0x6D]);
+    }
+
+    for (i = 0; i < size; i++) {
+        /* Skip first 3 bytes (jump_boot) */
+        if (i < 3)
+            continue;
+            
+        /* Skip checksum field */
+        if (i >= 0x6A && i < 0x6E)
+            continue;
+            
+        checksum = ((checksum << 31) | (checksum >> 1)) + p[i];
+
+        /* Print intermediate checksums at highest verbosity */
+        if (ctx->verbose >= DEBUG_DUMP && i % 512 == 0)
+            printf("Checksum after byte 0x%04zx: %08x\n", i, checksum);
+    }
+
+    /* Print final checksum at medium verbosity */
+    if (ctx->verbose >= DEBUG_DETAIL)
+        printf("Final calculated checksum: %08x\n", checksum);
+
+    return checksum;
 } 

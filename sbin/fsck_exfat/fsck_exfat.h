@@ -209,7 +209,7 @@ struct fsck_exfat_ctx {
     int modified;                /* Set if filesystem was modified */
     int errors;                  /* Number of errors found */
     int fix_errors;              /* Fix errors if found */
-    int verbose;                 /* Verbose output */
+    int verbose;                 /* Verbosity level (0-3) */
     uint32_t lost_found_cluster; /* First cluster of lost+found directory */
     uint32_t next_lost_file;    /* Counter for lost file names */
     uint32_t bitmap_cluster;     /* First cluster of allocation bitmap */
@@ -250,5 +250,10 @@ int create_lost_file(struct fsck_exfat_ctx *ctx, uint32_t cluster);
 /* New function prototypes */
 int read_cluster(struct fsck_exfat_ctx *ctx, uint32_t cluster, void *buffer);
 int find_system_files(struct fsck_exfat_ctx *ctx);
+
+/* Add near the top with other defines */
+#define DEBUG_BASIC   1  /* Basic info (-v) */
+#define DEBUG_DETAIL  2  /* Detailed info (-vv) */
+#define DEBUG_DUMP    3  /* Full hex dumps (-vvv) */
 
 #endif /* _FSCK_EXFAT_H_ */ 
