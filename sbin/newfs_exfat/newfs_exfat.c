@@ -239,6 +239,21 @@ write_boot_sector(struct mkfs_exfat_ctx *ctx)
     uint8_t boot_region[EXFAT_BOOT_REGION_SIZE * EXFAT_SECTOR_SIZE];
     int i;
 
+    /* Initialize entire boot region to zeros */
+    memset(boot_region, 0, sizeof(boot_region));
+
+    /* Set boot signatures for all sectors in main boot region
+     * Per spec section 3.1: All boot sectors must end with 0x55 0xAA
+     */
+    for (i = 0; i < EXFAT_BOOT_REGION_SIZE; i++) {
+        boot_region[i * EXFAT_SECTOR_SIZE + 510] = 0x55;
+        boot_region[i * EXFAT_SECTOR_SIZE + 511] = 0xAA;
+    }
+
+    /* Set 0xF4 padding for boot sector per spec section 3.1.1 */
+    memset(boot_region + 0x70, 0, 8);
+    memset(boot_region + 0x78, 0xF4, EXFAT_SECTOR_SIZE - 0x78 - 2);
+
     /* Initialize boot sector */
     memset(&boot, 0, sizeof(boot));
 
@@ -252,7 +267,7 @@ write_boot_sector(struct mkfs_exfat_ctx *ctx)
     memset(boot.must_be_zero, 0, sizeof(boot.must_be_zero));
 
     /* Set partition offset (8 sectors) */
-    boot.partition_offset = htole64(0x0800);  /* Little-endian 8 */
+    boot.partition_offset = htole64(8);  /* Per spec: 8 sectors */
 
     /* Set volume length */
     boot.volume_length = htole64(ctx->total_sectors);
@@ -265,7 +280,7 @@ write_boot_sector(struct mkfs_exfat_ctx *ctx)
     boot.root_dir_cluster = htole32(4);
 
     /* Set volume serial */
-    boot.volume_serial = htole32(0x67a30e5a);
+    boot.volume_serial = htole32(ctx->volume_serial);
 
     /* Set volume flags */
     boot.volume_flags = htole16(0x0000);      /* No flags set */
@@ -282,66 +297,29 @@ write_boot_sector(struct mkfs_exfat_ctx *ctx)
     memset(boot.reserved, 0, sizeof(boot.reserved));
     memset(boot.boot_code, 0, sizeof(boot.boot_code));
 
-    /* Fill entire sector with 0xF4 first */
-    memset(sector, 0xF4, EXFAT_SECTOR_SIZE);
-    /* Copy boot record but preserve 0xF4 padding from 0x70-0x1EF */
-    memcpy(sector, &boot, 0x70);  // Copy only up to padding area
-
-    sector[510] = 0x55;
-    sector[511] = 0xAA;
-
-    /* Start building boot region with main boot sector
-     * Per spec section 3.1.1: First sector contains boot record
-     * followed by 0xF4 padding from offset 0x70 to 0x1EF
-     */
-    memcpy(boot_region, sector, EXFAT_SECTOR_SIZE);
+    /* Copy boot record into first sector */
+    memcpy(boot_region, &boot, 0x70);  // Copy only up to padding area
 
     /* Write extended boot sectors */
     for (i = 1; i < 24; i++) {
-        size_t j;
-        
-        /* Clear sector */
-        memset(sector, 0, EXFAT_SECTOR_SIZE);
-
-        /* Add validation pattern at required sectors per spec
-         * The ExFAT spec requires two validation sectors:
-         * - Sector 11 (0x1600) in main boot region
-         * - Sector 23 (0x2E00) in backup boot region
-         * Each sector must contain the repeating pattern
-         */
-        if (i == EXFAT_VALIDATION_SECTOR1 || i == EXFAT_VALIDATION_SECTOR2) {
+        /* Add validation pattern at required sectors per spec */
+        if (i == EXFAT_VALIDATION_SECTOR1) {
             uint32_t pattern = EXFAT_BOOT_VALIDATION_PATTERN;
-            for (j = 0; j < EXFAT_SECTOR_SIZE - 2; j += 4) {
+            uint8_t *sector = boot_region + (i * EXFAT_SECTOR_SIZE);
+            for (size_t j = 0; j < EXFAT_SECTOR_SIZE - 2; j += 4) {
                 memcpy(sector + j, &pattern, 4);
             }
         }
-
-        sector[510] = 0x55;
-        sector[511] = 0xAA;
-
-        /* Add sector to boot region buffer
-         * Per spec section 3.1:
-         * - Sectors 1-8: Extended boot sectors (zeros)
-         * - Sectors 9-10: OEM parameters (zeros)
-         * - Sectors 11,23: Validation pattern sectors
-         * All sectors end with 0x55 0xAA signature
-         */
-        memcpy(boot_region + (i * EXFAT_SECTOR_SIZE), sector, EXFAT_SECTOR_SIZE);
     }
 
-    /* Write complete boot region and its backup
-     * Per spec section 3.1:
-     * - Main boot region: First 12 sectors (0-11)
-     * - Backup boot region: Next 12 sectors (12-23)
-     * - Backup must be an exact byte-for-byte copy of main
-     */
-    /* Write main boot region */
+    /* Write main boot region (sectors 0-11) */
     for (i = 0; i < 12; i++) {
-        if (write_sector(ctx, i, boot_region + (i * EXFAT_SECTOR_SIZE)) < 0)
+        const uint8_t *sector_data = boot_region + (i * EXFAT_SECTOR_SIZE);
+        if (write_sector(ctx, i, sector_data) < 0)
             return -1;
     }
 
-    /* Write backup boot region */
+    /* Write backup boot region (sectors 12-23) */
     for (i = 0; i < 12; i++) {
         if (write_sector(ctx, i + 12, boot_region + (i * EXFAT_SECTOR_SIZE)) < 0)
             return -1;
@@ -362,7 +340,7 @@ write_fat(struct mkfs_exfat_ctx *ctx)
         return -1;
 
     /* First two clusters are reserved */
-    fat_sector[0] = htole32(0xFFFFFFF8);  /* Media type */
+    fat_sector[0] = htole32(0xFFFFFFFE);  /* Media type per spec */
     fat_sector[1] = htole32(0xFFFFFFFF);  /* End of cluster chain */
 
     /* Mark clusters 2-4 as end of chain */
@@ -425,7 +403,8 @@ write_upcase_table(struct mkfs_exfat_ctx *ctx)
 {
     uint16_t *upcase;
     uint32_t checksum = 0;
-    size_t table_size = 128 * 1024;  /* 128KB */
+    /* Per spec: Upcase table must be 5836 bytes (2918 entries) */
+    size_t table_size = 5836;
     size_t i;
     int error = 0;
 
@@ -436,7 +415,7 @@ write_upcase_table(struct mkfs_exfat_ctx *ctx)
         return -1;
     }
 
-    /* Initialize Unicode uppercase mapping table */
+    /* Initialize Unicode uppercase mapping table per spec */
     for (i = 0; i < 65536; i++) {
         /* Basic Latin & Latin-1 Supplement */
         if (i >= 'a' && i <= 'z')
