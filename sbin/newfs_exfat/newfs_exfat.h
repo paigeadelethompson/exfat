@@ -108,24 +108,21 @@ struct exfat_boot_record {
 
 /* Format context structure */
 struct mkfs_exfat_ctx {
-    const char *device;          /* Device path */
+    const char *device;          /* Device name */
     int fd;                      /* Device file descriptor */
-    int verbose;                /* Verbose output flag */
+    int verbose;                 /* Verbosity level */
     uint32_t bytes_per_sector;   /* Bytes per sector (usually 512) */
     uint32_t sectors_per_cluster; /* Sectors per cluster */
-    uint32_t number_of_fats;      /* Number of FATs (1 or 2) */
+    uint32_t number_of_fats;     /* Number of FATs (always 1 for ExFAT) */
     uint64_t total_sectors;      /* Total sectors on device */
-    uint32_t fat_length;         /* Length of FAT in sectors */
     uint32_t fat_offset;         /* FAT offset in sectors */
+    uint32_t fat_length;         /* FAT length in sectors */
     uint32_t cluster_heap_offset; /* Cluster heap offset in sectors */
     uint32_t cluster_count;      /* Number of clusters */
-    uint32_t bitmap_cluster;     /* First cluster of bitmap */
-    uint32_t upcase_cluster;     /* First cluster of upcase table */
     uint32_t root_cluster;       /* First cluster of root directory */
+    uint32_t bitmap_cluster;     /* First cluster of allocation bitmap */
+    uint32_t upcase_cluster;     /* First cluster of upcase table */
     uint32_t volume_serial;      /* Volume serial number */
-    struct exfat_boot_record boot;  /* Boot sector */
-    uint32_t first_cluster;     /* First available cluster */
-    const char *volume_label;   /* Volume label */
     uint32_t upcase_checksum;    /* Checksum of upcase table */
 };
 
@@ -226,5 +223,15 @@ int exfat_utf8_to_utf16(const char *utf8, uint16_t *utf16, size_t maxout, size_t
     (EXFAT_IS_POWER2(n) && \
      (n) >= EXFAT_MIN_CLUSTER_SIZE && \
      (n) <= EXFAT_MAX_CLUSTER_SIZE)
+
+/* Add verbosity level defines */
+#define DEBUG_BASIC   1  /* Basic info (-v) */
+#define DEBUG_DETAIL  2  /* Detailed info (-vv) */ 
+#define DEBUG_DUMP    3  /* Full hex dumps (-vvv) */
+
+/* ExFAT cluster status */
+#define EXFAT_CLUSTER_FREE         0x00000000
+#define EXFAT_CLUSTER_BAD          0xFFFFFFF7
+#define EXFAT_CLUSTER_END          0xFFFFFFFF
 
 #endif /* _MKFS_EXFAT_H_ */ 
