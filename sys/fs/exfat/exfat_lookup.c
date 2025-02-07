@@ -35,21 +35,31 @@
 int
 exfat_lookup_node(struct vnode *dvp, struct componentname *cnp, struct vnode **vpp)
 {
+    if (bootverbose)
+        printf("exfat: looking up '%s' in directory %p\n", 
+               cnp->cn_nameptr, dvp);
+
     struct exfat_mount *emp = VTOVFSMP(dvp);
     struct exfat_scan_ctx ctx;
     struct exfat_direntry_set es;
     int error;
 
-    /* Initialize directory scanning */
+    /* Initialize directory scan */
     error = exfat_scan_directory(dvp, &ctx);
-    if (error)
+    if (error) {
+        if (bootverbose)
+            printf("exfat: failed to scan directory: %d\n", error);
         return error;
+    }
 
-    /* Scan directory entries */
+    /* Scan for matching entry */
     while ((error = exfat_next_dirent(&ctx, &es)) == 0) {
-        /* Check if name matches */
         if (exfat_name_match(emp, &es, cnp->cn_nameptr, cnp->cn_namelen)) {
-            /* Found matching entry */
+            if (bootverbose)
+                printf("exfat: found matching entry, cluster %u\n", 
+                       es.stream.first_cluster);
+
+            /* Found it - get or create vnode */
             error = exfat_get_node(dvp->v_mount, es.stream.first_cluster,
                                  (es.file.file_attributes & EXFAT_ATTR_DIRECTORY) ? EXFAT_VDIR : EXFAT_VREG,
                                  vpp);
@@ -58,6 +68,9 @@ exfat_lookup_node(struct vnode *dvp, struct componentname *cnp, struct vnode **v
         }
     }
 
+    if (bootverbose)
+        printf("exfat: entry not found\n");
+
     exfat_scan_cleanup(&ctx);
-    return (error == ENOENT) ? ENOENT : error;
+    return ENOENT;
 } 

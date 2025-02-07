@@ -27,6 +27,9 @@
 #include "exfat.h"
 #include "exfat_volume.h"
 
+/* Forward declarations */
+static int exfat_read_boot_sector(struct exfat_mount *emp);
+
 /*
  * Read volume label from root directory
  */
@@ -486,14 +489,38 @@ exfat_update_volume_flags(struct exfat_mount *emp, uint16_t flags)
 int
 exfat_set_volume_dirty(struct exfat_mount *emp, int dirty)
 {
-    uint16_t flags = emp->boot.volume_flags;
+    if (bootverbose)
+        printf("exfat: marking volume %s\n", dirty ? "dirty" : "clean");
 
-    if (dirty)
-        flags |= EXFAT_VOL_DIRTY;
-    else
-        flags &= ~EXFAT_VOL_DIRTY;
+    struct buf *bp;
+    int error;
 
-    return exfat_update_volume_flags(emp, flags);
+    /* Read boot sector */
+    error = bread(emp->devvp, 0, EXFAT_SECTOR_SIZE, NOCRED, &bp);
+    if (error) {
+        if (bootverbose)
+            printf("exfat: failed to read boot sector: %d\n", error);
+        brelse(bp);
+        return error;
+    }
+
+    /* Update volume state */
+    struct exfat_boot_record *bs = (struct exfat_boot_record *)bp->b_data;
+    bs->volume_state = dirty ? EXFAT_STATE_DIRTY : EXFAT_STATE_CLEAN;
+
+    /* Write back boot sector */
+    error = bwrite(bp);
+    if (error) {
+        if (bootverbose)
+            printf("exfat: failed to write boot sector: %d\n", error);
+        return error;
+    }
+
+    if (bootverbose)
+        printf("exfat: volume marked %s successfully\n", 
+               dirty ? "dirty" : "clean");
+
+    return 0;
 }
 
 /*
@@ -654,15 +681,16 @@ exfat_update_volume_time(struct exfat_mount *emp)
 int
 exfat_update_percent_in_use(struct exfat_mount *emp)
 {
+    if (bootverbose)
+        printf("exfat: updating percent-in-use\n");
+
     struct buf *bp;
-    struct exfat_boot_record *boot;
-    uint32_t total_clusters = emp->boot.cluster_count;
-    uint32_t used_clusters = 0;
     uint32_t cluster;
+    uint32_t used_clusters = 0;
     int error, used;
 
     /* Count used clusters from bitmap */
-    for (cluster = 2; cluster < total_clusters + 2; cluster++) {
+    for (cluster = 2; cluster < emp->boot.cluster_count + 2; cluster++) {
         error = exfat_get_cluster_status(emp, cluster, &used);
         if (error)
             return error;
@@ -671,48 +699,80 @@ exfat_update_percent_in_use(struct exfat_mount *emp)
     }
 
     /* Calculate percentage (0-100) */
-    uint8_t percent = (used_clusters * 100) / total_clusters;
+    uint8_t percent = (used_clusters * 100) / emp->boot.cluster_count;
 
-    /* Update boot sector */
+    /* Read current boot sector */
+    error = exfat_read_boot_sector(emp);
+    if (error)
+        return error;
+
+    /* Update percent in use */
+    emp->boot.percent_in_use = percent;
+
+    /* Write back */
     error = bread(emp->devvp, 0, EXFAT_SECTOR_SIZE, NOCRED, &bp);
     if (error) {
+        if (bootverbose)
+            printf("exfat: failed to read boot sector: %d\n", error);
         brelse(bp);
         return error;
     }
 
-    boot = (struct exfat_boot_record *)bp->b_data;
-    boot->percent_in_use = percent;
-
-    /* Write back */
+    memcpy(bp->b_data, &emp->boot, sizeof(struct exfat_boot_record));
     error = bwrite(bp);
-    if (error)
+    if (error) {
+        if (bootverbose)
+            printf("exfat: failed to write boot sector: %d\n", error);
         return error;
+    }
 
-    /* Update mount structure */
-    emp->boot.percent_in_use = percent;
+    if (bootverbose)
+        printf("exfat: percent-in-use updated to %u%%\n", percent);
 
     return 0;
 }
 
-/* Add function prototypes */
-static int __unused exfat_read_boot_record(struct exfat_mount *emp);
-
-static int __unused
-exfat_read_boot_record(struct exfat_mount *emp)
+static int
+exfat_read_boot_sector(struct exfat_mount *emp)
 {
+    if (bootverbose)
+        printf("exfat: reading boot sector\n");
+
     struct buf *bp;
     int error;
 
     /* Read boot sector */
     error = bread(emp->devvp, 0, EXFAT_SECTOR_SIZE, NOCRED, &bp);
     if (error) {
+        if (bootverbose)
+            printf("exfat: failed to read boot sector: %d\n", error);
         brelse(bp);
         return error;
     }
 
-    /* Copy boot sector */
+    /* Copy and validate boot sector */
     memcpy(&emp->boot, bp->b_data, sizeof(struct exfat_boot_record));
     brelse(bp);
+
+    /* Check signature */
+    if (memcmp(emp->boot.fs_name, "EXFAT   ", 8) != 0) {
+        if (bootverbose)
+            printf("exfat: invalid filesystem signature\n");
+        return EINVAL;
+    }
+
+    if (bootverbose) {
+        printf("exfat: filesystem parameters:\n");
+        printf("  bytes per sector: %u\n", 1 << emp->boot.bytes_per_sector_shift);
+        printf("  sectors per cluster: %u\n", 1 << emp->boot.sectors_per_cluster_shift);
+        printf("  number of FATs: %u\n", emp->boot.number_of_fats);
+        printf("  volume serial: %08x\n", emp->boot.volume_serial);
+        printf("  FAT offset: %u\n", emp->boot.fat_offset);
+        printf("  FAT length: %u\n", emp->boot.fat_length);
+        printf("  cluster heap offset: %u\n", emp->boot.cluster_heap_offset);
+        printf("  cluster count: %u\n", emp->boot.cluster_count);
+        printf("  root dir cluster: %u\n", emp->boot.root_dir_cluster);
+    }
 
     return 0;
 } 

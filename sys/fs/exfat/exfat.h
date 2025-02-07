@@ -36,6 +36,11 @@ enum vtype;  /* Forward declaration of vtype enum */
 #define EXFAT_SECTOR_SIZE     512
 #define EXFAT_SECTOR_BITS     9
 
+/* Cluster status values */
+#define EXFAT_CLUSTER_FREE    0x00000000
+#define EXFAT_CLUSTER_END     0xFFFFFFFF
+#define EXFAT_CLUSTER_BAD     0xFFFFFFF7
+
 /* ExFAT volume boot record structure */
 struct exfat_boot_record {
     uint8_t  jump_boot[3];
@@ -51,6 +56,7 @@ struct exfat_boot_record {
     uint32_t volume_serial;
     uint16_t fs_revision;
     uint16_t volume_flags;
+    uint8_t  volume_state;      /* Clean/dirty state */
     uint8_t  bytes_per_sector_shift;
     uint8_t  sectors_per_cluster_shift;
     uint8_t  number_of_fats;
@@ -72,9 +78,11 @@ struct exfat_mount {
     uint32_t bitmap_cluster;     /* First cluster of allocation bitmap */
     uint64_t bitmap_size;        /* Size of allocation bitmap in bytes */
     uint32_t upcase_cluster;     /* First cluster of upcase table */
-    void    *upcase;            /* Upcase table structure */
+    struct exfat_upcase *upcase;   /* Upcase table */
     char     volume_label[12];   /* Volume label (UTF-8, null-terminated) */
     uint8_t  volume_label_len;   /* Length of volume label */
+    uint32_t bitmap_sectors;      /* Number of sectors in bitmap */
+    uint32_t clusters_count;     /* Total number of clusters */
 };
 
 /* ExFAT Directory Entry Types */
@@ -86,11 +94,6 @@ struct exfat_mount {
 #define EXFAT_ENTRY_STREAM       0xC0    /* Stream extension */
 #define EXFAT_ENTRY_NAME         0xC1    /* File name extension */
 #define EXFAT_ENTRY_DELETED      0xE5    /* Deleted entry */
-
-/* Cluster constants */
-#define EXFAT_CLUSTER_FREE       0x00000000
-#define EXFAT_CLUSTER_BAD        0xFFFFFFF7
-#define EXFAT_CLUSTER_END        0xFFFFFFFF
 
 /* File attributes */
 #define EXFAT_ATTR_READ_ONLY     0x01
@@ -193,7 +196,8 @@ struct exfat_file_info {
 /* Function prototypes */
 uint32_t exfat_cluster_next(struct exfat_mount *emp, uint32_t cluster);
 int exfat_cluster_alloc(struct exfat_mount *emp, uint32_t *cluster);
-void exfat_cluster_free(struct exfat_mount *emp, uint32_t cluster);
+int exfat_cluster_free(struct exfat_mount *emp, uint32_t cluster);
+int exfat_cluster_link(struct exfat_mount *emp, uint32_t cluster, uint32_t next);
 
 /* Conversion macros */
 #define VFSTOEXFAT(mp)   ((struct exfat_mount *)((mp)->mnt_data))
@@ -241,6 +245,10 @@ static const uint8_t exfat_invalid_chars[] = {
 #define EXFAT_VOL_DIRTY        0x0001  /* Volume is dirty */
 #define EXFAT_VOL_ACTIVE_FAT   0x0002  /* Second FAT is active */
 
+/* Volume state values */
+#define EXFAT_STATE_CLEAN     0x00
+#define EXFAT_STATE_DIRTY     0x01
+
 /* Timestamp update flags */
 #define EXFAT_UTIME_ACCESS    0x01
 #define EXFAT_UTIME_MODIFY    0x02
@@ -272,7 +280,8 @@ struct exfat_timespec {
 };
 
 /* Function prototypes */
-int exfat_find_dirent(struct vnode *vp, uint32_t cluster, struct exfat_direntry_set *es, off_t *offset);
+int exfat_find_dirent(struct vnode *vp, uint32_t cluster,
+    struct exfat_direntry_set *es, off_t *offset);
 void exfat_update_timestamps(struct exfat_entry_file *file, int flags);
 int exfat_write_direntry(struct vnode *vp, struct exfat_direntry_set *es, off_t offset);
 

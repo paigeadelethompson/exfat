@@ -17,19 +17,33 @@
 
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/filedesc.h>
+#include <sys/proc.h>   /* Must be before namei.h */
+#include <sys/fcntl.h>  /* Must be before namei.h */
+#include <sys/uio.h>    /* Must be before namei.h */
+
+/* Define NDF flags if not already defined */
+#ifndef NDF_NO_FREE_PNBUF
+#define NDF_NO_FREE_PNBUF   0x00000020
+#endif
+#ifndef NDF_ONLY_PNBUF
+#define NDF_ONLY_PNBUF      (~NDF_NO_FREE_PNBUF)
+#endif
+
 #include <sys/namei.h>
 #include <sys/kernel.h>
-#include <sys/proc.h>
 #include <sys/module.h>
 #include <sys/mount.h>
 #include <sys/vnode.h>
 #include <sys/eventhandler.h>
 #include <sys/bio.h>
 #include <sys/buf.h>
-#include <sys/fcntl.h>
 #include <sys/malloc.h>
+#include <sys/conf.h>    /* For struct cdev */
+#include <geom/geom.h>
 
 #include "exfat.h"
+#include "exfat_fat.h"
 #include "exfat_node.h"
 
 static vfs_mount_t     exfat_mount;
@@ -80,62 +94,163 @@ exfat_read_fat_entry(struct exfat_mount *emp, uint32_t cluster, uint32_t *next)
 }
 
 /*
- * Get next cluster in chain
+ * Find the bitmap directory entry
  */
-uint32_t
-exfat_cluster_next(struct exfat_mount *emp, uint32_t cluster)
+static int
+exfat_find_bitmap(struct exfat_mount *emp, struct exfat_entry_bitmap *bitmap)
 {
-    uint32_t next;
+    struct buf *bp;
+    uint32_t cluster, offset;
     int error;
 
-    if (cluster < 2 || cluster >= emp->boot.cluster_count + 2)
-        return EXFAT_CLUSTER_END;
+    /* Start at root directory */
+    cluster = emp->boot.root_dir_cluster;
 
-    error = exfat_read_fat_entry(emp, cluster, &next);
-    if (error)
-        return EXFAT_CLUSTER_END;
+    /* Read first cluster of root directory */
+    error = bread(emp->devvp,
+                 emp->boot.cluster_heap_offset + 
+                 ((cluster - 2) << emp->boot.sectors_per_cluster_shift),
+                 emp->bytes_per_cluster, NOCRED, &bp);
+    if (error) {
+        brelse(bp);
+        return error;
+    }
 
-    return next;
+    /* Search for bitmap entry */
+    for (offset = 0; offset < emp->bytes_per_cluster; offset += sizeof(struct exfat_entry_bitmap)) {
+        struct exfat_entry_bitmap *entry = (struct exfat_entry_bitmap *)(bp->b_data + offset);
+        
+        if (entry->type == EXFAT_ENTRY_BITMAP) {
+            memcpy(bitmap, entry, sizeof(*bitmap));
+            brelse(bp);
+            return 0;
+        }
+    }
+
+    brelse(bp);
+    return ENOENT;
 }
 
 /* Update the mount implementation to read the boot sector: */
 static int
 exfat_mount(struct mount *mp)
 {
+    if (bootverbose)
+        printf("exfat: mounting %s\n", mp->mnt_stat.f_mntfromname);
+
+    struct vnode *devvp = NULL;
     struct exfat_mount *emp;
-    struct buf *bp;
+    struct buf *bp = NULL;
     int error;
+
+    if (vfs_flagopt(mp->mnt_optnew, "update", NULL, 0)) {
+        if (bootverbose)
+            printf("exfat: updating existing mount\n");
+        /* Update mount - get existing mount info */
+        emp = VFSTOEXFAT(mp);
+        devvp = emp->devvp;
+    } else {
+        if (bootverbose)
+            printf("exfat: new mount\n");
+        /* New mount */
+        char *from;
+        error = 0;
+        from = vfs_getopts(mp->mnt_optnew, "from", &error);
+        if (error) {
+            if (bootverbose)
+                printf("exfat: failed to get device path: %d\n", error);
+            return error;
+        }
+        
+        /* Get the device vnode */
+        struct nameidata nd;
+        NDINIT(&nd, LOOKUP, FOLLOW, UIO_SYSSPACE, from);
+        error = namei(&nd);
+        if (error) {
+            if (bootverbose)
+                printf("exfat: failed to lookup device path: %d\n", error);
+            return error;
+        }
+        devvp = nd.ni_vp;
+        NDFREE_PNBUF(&nd);
+
+        struct g_provider *pp;
+        pp = g_dev_getprovider(devvp->v_rdev);
+        if (pp == NULL) {
+            if (bootverbose)
+                printf("exfat: failed to get device provider\n");
+            vrele(devvp);
+            return ENODEV;
+        }
+
+        /* Set the mounted device in mount structure */
+        vfs_mountedfrom(mp, from);
+    }
+
+    /* Check if it's a block device */
+    if (devvp->v_type != VBLK) {
+        if (bootverbose)
+            printf("exfat: not a block device\n");
+        vrele(devvp);
+        return ENOTBLK;
+    }
 
     /* Allocate mount structure */
     emp = malloc(sizeof(struct exfat_mount), M_EXFAT, M_WAITOK | M_ZERO);
     mp->mnt_data = emp;
     emp->mp = mp;
+    emp->devvp = devvp;
 
     /* Read boot sector */
-    error = bread(EXFAT_DEV(mp), 0, EXFAT_SECTOR_SIZE, NOCRED, &bp);
+    error = bread(devvp, 0, EXFAT_SECTOR_SIZE, NOCRED, &bp);
     if (error) {
-        free(emp, M_EXFAT);
+        if (bootverbose)
+            printf("exfat: failed to read boot sector: %d\n", error);
+        brelse(bp);
         return error;
     }
 
-    /* Copy and verify boot sector */
+    /* Copy boot sector */
     memcpy(&emp->boot, bp->b_data, sizeof(struct exfat_boot_record));
     brelse(bp);
 
-    if (emp->boot.fs_name[0] != 'E' ||
-        emp->boot.fs_name[1] != 'X' ||
-        emp->boot.fs_name[2] != 'F' ||
-        emp->boot.fs_name[3] != 'A' ||
-        emp->boot.fs_name[4] != 'T' ||
-        emp->boot.fs_name[5] != ' ' ||
-        emp->boot.fs_name[6] != ' ' ||
-        emp->boot.fs_name[7] != ' ') {
-        free(emp, M_EXFAT);
+    /* Verify boot sector */
+    if (memcmp(emp->boot.fs_name, "EXFAT   ", 8) != 0) {
+        if (bootverbose)
+            printf("exfat: invalid filesystem signature\n");
         return EINVAL;
     }
 
-    /* Calculate important filesystem parameters */
+    if (bootverbose) {
+        printf("exfat: filesystem parameters:\n");
+        printf("  sectors per cluster: %d\n", 1 << emp->boot.sectors_per_cluster_shift);
+        printf("  cluster count: %d\n", emp->boot.cluster_count);
+        printf("  FAT offset: %d\n", emp->boot.fat_offset);
+        printf("  FAT length: %d\n", emp->boot.fat_length);
+        printf("  cluster heap offset: %d\n", emp->boot.cluster_heap_offset);
+        printf("  root dir cluster: %d\n", emp->boot.root_dir_cluster);
+    }
+
+    /* Calculate mount parameters */
     emp->bytes_per_cluster = EXFAT_SECTOR_SIZE << emp->boot.sectors_per_cluster_shift;
+    emp->clusters_count = emp->boot.cluster_count;
+
+    /* Find and read bitmap directory entry */
+    struct exfat_entry_bitmap bitmap;
+    error = exfat_find_bitmap(emp, &bitmap);
+    if (error) {
+        if (bootverbose)
+            printf("exfat: failed to find bitmap: %d\n", error);
+        return error;
+    }
+
+    if (bootverbose)
+        printf("exfat: mount successful\n");
+
+    /* Calculate bitmap size in sectors */
+    emp->bitmap_sectors = howmany(emp->clusters_count, EXFAT_SECTOR_SIZE * 8);
+
+    /* Calculate important filesystem parameters */
     emp->clusters_per_fat = emp->boot.fat_length >> emp->boot.sectors_per_cluster_shift;
     emp->root_cluster = emp->boot.root_dir_cluster;
 
@@ -185,29 +300,49 @@ exfat_mount(struct mount *mp)
 static int
 exfat_unmount(struct mount *mp, int mntflags)
 {
+    if (bootverbose)
+        printf("exfat: unmounting %s\n", mp->mnt_stat.f_mntfromname);
+
     struct exfat_mount *emp = VFSTOEXFAT(mp);
     int error;
 
     /* Update percent-in-use before unmounting */
     if ((mp->mnt_flag & MNT_RDONLY) == 0) {
+        if (bootverbose)
+            printf("exfat: updating percent-in-use\n");
         error = exfat_update_percent_in_use(emp);
-        if (error)
+        if (error) {
+            if (bootverbose)
+                printf("exfat: failed to update percent-in-use: %d\n", error);
             return error;
+        }
 
         /* Mark volume as clean */
+        if (bootverbose)
+            printf("exfat: marking volume clean\n");
         error = exfat_set_volume_dirty(emp, 0);
-        if (error)
+        if (error) {
+            if (bootverbose)
+                printf("exfat: failed to mark volume clean: %d\n", error);
             return error;
+        }
     }
 
+    if (bootverbose)
+        printf("exfat: flushing vnodes\n");
     error = vflush(mp, 0, 0, curthread);
-    if (error)
+    if (error) {
+        if (bootverbose)
+            printf("exfat: vflush failed: %d\n", error);
         return error;
+    }
 
     exfat_cleanup_upcase(emp);
     free(emp, M_EXFAT);
     mp->mnt_data = NULL;
 
+    if (bootverbose)
+        printf("exfat: unmount successful\n");
     return 0;
 }
 
@@ -217,6 +352,8 @@ exfat_unmount(struct mount *mp, int mntflags)
 static int
 exfat_root(struct mount *mp, int flags, struct vnode **vpp)
 {
+    if (bootverbose)
+        printf("exfat: getting root vnode\n");
     struct exfat_mount *emp;
     struct vnode *vp;
     int error;
@@ -224,10 +361,15 @@ exfat_root(struct mount *mp, int flags, struct vnode **vpp)
     emp = VFSTOEXFAT(mp);
 
     error = exfat_get_node(mp, emp->root_cluster, VDIR, &vp);
-    if (error)
+    if (error) {
+        if (bootverbose)
+            printf("exfat: failed to get root node: %d\n", error);
         return error;
+    }
 
     *vpp = vp;
+    if (bootverbose)
+        printf("exfat: root vnode obtained\n");
     return 0;
 }
 
@@ -237,6 +379,8 @@ exfat_root(struct mount *mp, int flags, struct vnode **vpp)
 static int
 exfat_statfs(struct mount *mp, struct statfs *sbp)
 {
+    if (bootverbose)
+        printf("exfat: getting filesystem statistics\n");
     struct exfat_mount *emp;
     uint32_t free_clusters = 0;
     uint32_t cluster;
@@ -250,6 +394,9 @@ exfat_statfs(struct mount *mp, struct statfs *sbp)
             next == EXFAT_CLUSTER_FREE)
             free_clusters++;
     }
+
+    if (bootverbose)
+        printf("exfat: found %u free clusters\n", free_clusters);
 
     sbp->f_bsize = emp->bytes_per_cluster;
     sbp->f_iosize = emp->bytes_per_cluster;
@@ -271,6 +418,8 @@ exfat_statfs(struct mount *mp, struct statfs *sbp)
 static int
 exfat_sync(struct mount *mp, int waitfor)
 {
+    if (bootverbose)
+        printf("exfat: syncing filesystem\n");
     struct exfat_mount *emp = VFSTOEXFAT(mp);
     struct vnode *vp;
     int error, allerror = 0;
@@ -281,6 +430,8 @@ exfat_sync(struct mount *mp, int waitfor)
 
     /* First flush all vnodes */
     if (waitfor == MNT_WAIT) {
+        if (bootverbose)
+            printf("exfat: flushing all vnodes\n");
         struct vnode *mvp;
         vp = TAILQ_FIRST(&mp->mnt_nvnodelist);
         while (vp != NULL) {
@@ -288,36 +439,56 @@ exfat_sync(struct mount *mp, int waitfor)
             mvp = TAILQ_NEXT(vp, v_nmntvnodes);
             VI_UNLOCK(vp);
             error = VOP_FSYNC(vp, MNT_WAIT, curthread);
-            if (error)
+            if (error) {
+                if (bootverbose)
+                    printf("exfat: vnode sync failed: %d\n", error);
                 allerror = error;
+            }
             vrele(vp);
             vp = mvp;
         }
     }
 
     /* Then sync memory-mapped files */
+    if (bootverbose)
+        printf("exfat: syncing memory-mapped files\n");
     error = vfs_stdsync(mp, MNT_WAIT);
-    if (error)
+    if (error) {
+        if (bootverbose)
+            printf("exfat: memory-mapped sync failed: %d\n", error);
         allerror = error;
+    }
 
     /* Finally update percent-in-use after all changes are flushed */
+    if (bootverbose)
+        printf("exfat: updating percent-in-use\n");
     error = exfat_update_percent_in_use(emp);
-    if (error)
+    if (error) {
+        if (bootverbose)
+            printf("exfat: failed to update percent-in-use: %d\n", error);
         allerror = error;
+    }
 
+    if (bootverbose)
+        printf("exfat: sync %s\n", allerror ? "failed" : "successful");
     return allerror;
 }
 
-static int __unused
+static int
 exfat_modevent(module_t mod, int type, void *data)
 {
     int error = 0;
 
     switch (type) {
     case MOD_LOAD:
-        exfat_node_init();
+        error = exfat_node_init();
+        if (error)
+            return error;
         break;
     case MOD_UNLOAD:
+        error = vflush(NULL, 0, 0, curthread);
+        if (error)
+            return error;
         exfat_node_uninit();
         break;
     default:
@@ -335,5 +506,11 @@ static struct vfsconf exfat_vfsconf = {
     .vfc_flags = VFCF_READONLY,
 };
 
-DECLARE_MODULE(exfat, exfat_vfsconf, SI_SUB_VFS, SI_ORDER_MIDDLE);
+static moduledata_t exfat_mod = {
+    "exfat",              /* module name */
+    exfat_modevent,       /* event handler */
+    &exfat_vfsconf        /* extra data */
+};
+
+DECLARE_MODULE(exfat, exfat_mod, SI_SUB_VFS, SI_ORDER_MIDDLE);
 MODULE_VERSION(exfat, 1); 

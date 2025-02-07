@@ -30,22 +30,31 @@
 #include "exfat.h"
 #include "exfat_node.h"
 
+/* Node hash table */
 struct exfat_node_hash exfat_node_hash[EXFAT_NODES_HASH_SIZE];
 struct mtx exfat_node_hash_mtx;
 
 /*
  * Initialize the node hash table
  */
-void
+int
 exfat_node_init(void)
 {
-    int i;
+    if (bootverbose)
+        printf("exfat: initializing node hash table\n");
 
-    mtx_init(&exfat_node_hash_mtx, "exfat_node_hash", NULL, MTX_DEF);
-    for (i = 0; i < EXFAT_NODES_HASH_SIZE; i++) {
-        LIST_INIT(&exfat_node_hash[i].lh_list);
+    /* Initialize hash table */
+    for (int i = 0; i < EXFAT_NODES_HASH_SIZE; i++) {
+        LIST_INIT(&exfat_node_hash[i].head);
         exfat_node_hash[i].lh_count = 0;
     }
+
+    /* Initialize mutex */
+    mtx_init(&exfat_node_hash_mtx, "exfat_node_hash", NULL, MTX_DEF);
+
+    if (bootverbose)
+        printf("exfat: node hash table initialized\n");
+    return 0;
 }
 
 /*
@@ -54,6 +63,9 @@ exfat_node_init(void)
 void
 exfat_node_uninit(void)
 {
+    if (bootverbose)
+        printf("exfat: cleaning up node hash table\n");
+
     mtx_destroy(&exfat_node_hash_mtx);
 }
 
@@ -68,9 +80,12 @@ exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
     struct vnode *vp;
     int error;
 
+    if (bootverbose)
+        printf("exfat: getting node for cluster %u\n", cluster);
+
     /* Check hash table first */
     mtx_lock(&exfat_node_hash_mtx);
-    LIST_FOREACH(ep, &exfat_node_hash[EXFAT_NODE_HASH(cluster)].lh_list, hash) {
+    LIST_FOREACH(ep, &exfat_node_hash[EXFAT_NODE_HASH(cluster)].head, hash) {
         if (ep->cluster == cluster && ETOV(ep)->v_mount == mp) {
             vp = ETOV(ep);
             VI_LOCK(vp);
@@ -79,10 +94,15 @@ exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
             if (error)
                 return error;
             *vpp = vp;
+            if (bootverbose)
+                printf("exfat: found existing node\n");
             return 0;
         }
     }
     mtx_unlock(&exfat_node_hash_mtx);
+
+    if (bootverbose)
+        printf("exfat: creating new node\n");
 
     /* Allocate new node */
     error = getnewvnode("exfat", mp, &exfat_vnodeops, &vp);
@@ -105,11 +125,13 @@ exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
 
     /* Add to hash table */
     mtx_lock(&exfat_node_hash_mtx);
-    LIST_INSERT_HEAD(&exfat_node_hash[EXFAT_NODE_HASH(cluster)].lh_list, ep, hash);
+    LIST_INSERT_HEAD(&exfat_node_hash[EXFAT_NODE_HASH(cluster)].head, ep, hash);
     exfat_node_hash[EXFAT_NODE_HASH(cluster)].lh_count++;
     mtx_unlock(&exfat_node_hash_mtx);
 
     *vpp = vp;
+    if (bootverbose)
+        printf("exfat: node creation complete\n");
     return 0;
 }
 
@@ -158,4 +180,20 @@ exfat_read_node_info(struct exfat_mount *emp, struct exfat_node *ep)
 
     brelse(bp);
     return 0;
+}
+
+void
+exfat_node_put(struct exfat_node *ep)
+{
+    if (bootverbose)
+        printf("exfat: releasing node for cluster %u\n", ep->cluster);
+
+    mtx_lock(&exfat_node_hash_mtx);
+    LIST_REMOVE(ep, hash);
+    exfat_node_hash[EXFAT_NODE_HASH(ep->cluster)].lh_count--;
+    mtx_unlock(&exfat_node_hash_mtx);
+
+    free(ep, M_EXFAT);
+    if (bootverbose)
+        printf("exfat: node released\n");
 } 

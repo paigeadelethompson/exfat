@@ -36,15 +36,34 @@
 int
 exfat_scan_directory(struct vnode *vp, struct exfat_scan_ctx *ctx)
 {
+    if (bootverbose)
+        printf("exfat: scanning directory vnode %p\n", vp);
+
     struct exfat_mount *emp = VTOVFSMP(vp);
     struct exfat_node *ep = VTOE(vp);
+    int error;
 
+    /* Initialize scan context */
     ctx->emp = emp;
     ctx->cluster = ep->finfo.first_cluster;
     ctx->offset = 0;
     ctx->bp = NULL;
-    ctx->entry = NULL;
 
+    /* Read first cluster */
+    error = bread(emp->devvp,
+                 emp->boot.cluster_heap_offset +
+                 ((ctx->cluster - 2) << emp->boot.sectors_per_cluster_shift),
+                 emp->bytes_per_cluster, NOCRED, &ctx->bp);
+    if (error) {
+        if (bootverbose)
+            printf("exfat: failed to read directory cluster: %d\n", error);
+        brelse(ctx->bp);
+        return error;
+    }
+
+    ctx->entry = (uint8_t *)ctx->bp->b_data;
+    if (bootverbose)
+        printf("exfat: directory scan initialized\n");
     return 0;
 }
 
@@ -54,12 +73,18 @@ exfat_scan_directory(struct vnode *vp, struct exfat_scan_ctx *ctx)
 int
 exfat_next_dirent(struct exfat_scan_ctx *ctx, struct exfat_direntry_set *es)
 {
+    if (bootverbose)
+        printf("exfat: reading next directory entry at offset %u\n", ctx->offset);
+
     struct buf *bp;
     uint32_t sector;
     int error;
 
     /* If we need a new sector */
     if (ctx->bp == NULL || ctx->offset >= EXFAT_SECTOR_SIZE) {
+        if (bootverbose)
+            printf("exfat: reading new sector for directory entries\n");
+
         if (ctx->bp != NULL)
             brelse(ctx->bp);
 
@@ -71,6 +96,8 @@ exfat_next_dirent(struct exfat_scan_ctx *ctx, struct exfat_direntry_set *es)
         /* Read the sector */
         error = bread(ctx->emp->devvp, sector, EXFAT_SECTOR_SIZE, NOCRED, &bp);
         if (error) {
+            if (bootverbose)
+                printf("exfat: failed to read directory sector: %d\n", error);
             ctx->bp = NULL;
             return error;
         }
@@ -82,6 +109,8 @@ exfat_next_dirent(struct exfat_scan_ctx *ctx, struct exfat_direntry_set *es)
 
     /* Check for end of directory */
     if (ctx->entry[ctx->offset] == EXFAT_ENTRY_EOD) {
+        if (bootverbose)
+            printf("exfat: reached end of directory\n");
         brelse(ctx->bp);
         ctx->bp = NULL;
         return ENOENT;
@@ -89,6 +118,8 @@ exfat_next_dirent(struct exfat_scan_ctx *ctx, struct exfat_direntry_set *es)
 
     /* Skip deleted entries */
     while (ctx->entry[ctx->offset] == EXFAT_ENTRY_DELETED) {
+        if (bootverbose)
+            printf("exfat: skipping deleted entry\n");
         ctx->offset += sizeof(struct exfat_entry_file);
         if (ctx->offset >= EXFAT_SECTOR_SIZE) {
             /* Need to read next sector */
@@ -97,8 +128,14 @@ exfat_next_dirent(struct exfat_scan_ctx *ctx, struct exfat_direntry_set *es)
     }
 
     /* Read file entry */
-    if (ctx->entry[ctx->offset] != EXFAT_ENTRY_FILE)
+    if (ctx->entry[ctx->offset] != EXFAT_ENTRY_FILE) {
+        if (bootverbose)
+            printf("exfat: invalid directory entry type: %d\n", ctx->entry[ctx->offset]);
         return EINVAL;
+    }
+
+    if (bootverbose)
+        printf("exfat: reading file entry at offset %u\n", ctx->offset);
 
     memcpy(&es->file, ctx->entry + ctx->offset, sizeof(struct exfat_entry_file));
     ctx->offset += sizeof(struct exfat_entry_file);
@@ -141,6 +178,9 @@ exfat_next_dirent(struct exfat_scan_ctx *ctx, struct exfat_direntry_set *es)
 void
 exfat_scan_cleanup(struct exfat_scan_ctx *ctx)
 {
+    if (bootverbose)
+        printf("exfat: cleaning up directory scan\n");
+
     if (ctx->bp != NULL) {
         brelse(ctx->bp);
         ctx->bp = NULL;
@@ -154,6 +194,9 @@ int
 exfat_name_match(struct exfat_mount *emp, const struct exfat_direntry_set *es,
                 const char *name, size_t len)
 {
+    if (bootverbose)
+        printf("exfat: comparing name '%s' (len %zu)\n", name, len);
+
     uint16_t uname[256];
     size_t ulen, i;
 
@@ -163,11 +206,19 @@ exfat_name_match(struct exfat_mount *emp, const struct exfat_direntry_set *es,
     ulen = i;
 
     /* Check length first */
-    if (ulen != es->stream.name_length)
+    if (ulen != es->stream.name_length) {
+        if (bootverbose)
+            printf("exfat: name length mismatch (%zu != %u)\n", 
+                   ulen, es->stream.name_length);
         return 0;
+    }
 
-    /* Compare names using upcase table */
-    return (exfat_name_compare(emp, uname, es->name[0].name, MIN(ulen, es->stream.name_length)) == 0);
+    int match = (exfat_name_compare(emp, uname, es->name[0].name, 
+                                   MIN(ulen, es->stream.name_length)) == 0);
+    if (bootverbose)
+        printf("exfat: name comparison %s\n", match ? "matched" : "failed");
+
+    return match;
 }
 
 /*

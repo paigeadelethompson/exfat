@@ -20,17 +20,23 @@
 
 #include <sys/param.h>
 #include <sys/time.h>
+#include <sys/types.h>
+#include <sys/timespec.h>
 
 /* Timestamp update flags */
 #define EXFAT_UTIME_ACCESS  0x01
 #define EXFAT_UTIME_MODIFY  0x02
 #define EXFAT_UTIME_CREATE  0x04
 
+/* Function prototypes */
 void exfat_timestamp_to_timespec(uint32_t timestamp, uint8_t time_ms,
                                uint8_t tz_offset, struct timespec *ts);
-void exfat_timespec_to_timestamp(const struct timespec *ts,
-                               uint32_t *timestamp, uint8_t *time_ms,
-                               uint8_t *tz_offset);
+void exfat_timespec_to_timestamp(const struct timespec *ts, uint32_t *timestamp,
+                               uint8_t *time_ms, uint8_t *tz_offset);
+int exfat_name_compare(struct exfat_mount *emp, const uint16_t *name1,
+                      const uint16_t *name2, size_t len);
+uint16_t exfat_upcase(struct exfat_mount *emp, uint16_t c);
+
 void exfat_update_timestamps(struct exfat_entry_file *file, int update_mask);
 
 #endif /* _FS_EXFAT_UTIL_H_ */ 

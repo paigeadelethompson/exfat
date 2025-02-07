@@ -3,7 +3,6 @@ KMOD=	exfat
 SRCS= exfat_access.c   \
       exfat_dir.c      \
       exfat_direntry.c \
-      exfat_extattr.c  \
       exfat_fat.c      \
       exfat_lookup.c   \
       exfat_node.c     \

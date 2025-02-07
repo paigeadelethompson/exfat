@@ -27,7 +27,9 @@
 int
 exfat_utf8_to_utf16(const char *utf8, uint16_t *utf16, size_t outlen, size_t *outused)
 {
-//    size_t i = 0;
+    if (bootverbose)
+        printf("exfat: converting UTF-8 string '%s' to UTF-16\n", utf8);
+
     uint32_t codepoint;
     const uint8_t *s = (const uint8_t *)utf8;
 
@@ -77,6 +79,9 @@ exfat_utf8_to_utf16(const char *utf8, uint16_t *utf16, size_t outlen, size_t *ou
     if (*s)
         return E2BIG;
 
+    if (bootverbose)
+        printf("exfat: UTF-8 conversion complete, output length %zu\n", *outused);
+
     return 0;
 }
 
@@ -86,6 +91,9 @@ exfat_utf8_to_utf16(const char *utf8, uint16_t *utf16, size_t outlen, size_t *ou
 int
 exfat_utf16_to_utf8(const uint16_t *utf16, size_t utf16len, char *utf8, size_t outlen, size_t *outused)
 {
+    if (bootverbose)
+        printf("exfat: converting UTF-16 string (len %zu) to UTF-8\n", utf16len);
+
     size_t i = 0;
     uint32_t codepoint;
     uint8_t *out = (uint8_t *)utf8;
@@ -111,19 +119,28 @@ exfat_utf16_to_utf8(const uint16_t *utf16, size_t utf16len, char *utf8, size_t o
         if (codepoint < 0x80) {
             out[(*outused)++] = codepoint;
         } else if (codepoint < 0x800) {
-            if (*outused + 2 > outlen)
-                return E2BIG;
+            if (*outused + 2 > outlen) {
+                if (bootverbose)
+                    printf("exfat: UTF-8 buffer too small at pos %zu\n", *outused);
+                break;
+            }
             out[(*outused)++] = 0xC0 | (codepoint >> 6);
             out[(*outused)++] = 0x80 | (codepoint & 0x3F);
         } else if (codepoint < 0x10000) {
-            if (*outused + 3 > outlen)
-                return E2BIG;
+            if (*outused + 3 > outlen) {
+                if (bootverbose)
+                    printf("exfat: UTF-8 buffer too small at pos %zu\n", *outused);
+                break;
+            }
             out[(*outused)++] = 0xE0 | (codepoint >> 12);
             out[(*outused)++] = 0x80 | ((codepoint >> 6) & 0x3F);
             out[(*outused)++] = 0x80 | (codepoint & 0x3F);
         } else {
-            if (*outused + 4 > outlen)
-                return E2BIG;
+            if (*outused + 4 > outlen) {
+                if (bootverbose)
+                    printf("exfat: UTF-8 buffer too small at pos %zu\n", *outused);
+                break;
+            }
             out[(*outused)++] = 0xF0 | (codepoint >> 18);
             out[(*outused)++] = 0x80 | ((codepoint >> 12) & 0x3F);
             out[(*outused)++] = 0x80 | ((codepoint >> 6) & 0x3F);
@@ -133,6 +150,11 @@ exfat_utf16_to_utf8(const uint16_t *utf16, size_t utf16len, char *utf8, size_t o
 
     if (i < utf16len)
         return E2BIG;
+
+    /* outused already contains the output length */
+
+    if (bootverbose)
+        printf("exfat: UTF-16 conversion complete, output length %zu\n", *outused);
 
     return 0;
 } 

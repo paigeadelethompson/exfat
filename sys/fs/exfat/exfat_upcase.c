@@ -30,12 +30,13 @@
 /* In-memory upcase table */
 struct exfat_upcase {
     uint16_t *table;
-    uint32_t size;       /* Number of entries */
-    uint32_t checksum;
+    size_t size;
 };
 
 /* Add function prototypes */
 static int exfat_read_upcase_table(struct exfat_mount *emp, struct exfat_upcase *upcase);
+int exfat_load_upcase_table(struct exfat_mount *emp);
+void exfat_unload_upcase_table(struct exfat_mount *emp);
 
 /*
  * Read upcase table from disk
@@ -43,6 +44,10 @@ static int exfat_read_upcase_table(struct exfat_mount *emp, struct exfat_upcase 
 static int
 exfat_read_upcase_table(struct exfat_mount *emp, struct exfat_upcase *upcase)
 {
+    if (bootverbose)
+        printf("exfat: reading upcase table data, size %lu bytes\n",
+               (unsigned long)(upcase->size * sizeof(uint16_t)));
+
     struct buf *bp;
     uint32_t cluster, sector, remaining;
     uint16_t *table;
@@ -59,8 +64,14 @@ exfat_read_upcase_table(struct exfat_mount *emp, struct exfat_upcase *upcase)
              ((cluster - 2) << emp->boot.sectors_per_cluster_shift);
 
     while (remaining > 0) {
+        if (bootverbose)
+            printf("exfat: reading sector %u, %u bytes remaining\n", 
+                   sector, remaining);
+
         error = bread(emp->devvp, sector, EXFAT_SECTOR_SIZE, NOCRED, &bp);
         if (error) {
+            if (bootverbose)
+                printf("exfat: failed to read sector: %d\n", error);
             brelse(bp);
             free(table, M_EXFAT);
             return error;
@@ -75,6 +86,9 @@ exfat_read_upcase_table(struct exfat_mount *emp, struct exfat_upcase *upcase)
         remaining -= size;
     }
 
+    if (bootverbose)
+        printf("exfat: upcase table data read successfully\n");
+
     return 0;
 }
 
@@ -82,11 +96,13 @@ exfat_read_upcase_table(struct exfat_mount *emp, struct exfat_upcase *upcase)
  * Initialize upcase table
  */
 int
-exfat_init_upcase(struct exfat_mount *emp)
+exfat_load_upcase_table(struct exfat_mount *emp)
 {
+    if (bootverbose)
+        printf("exfat: loading upcase table\n");
+
     struct buf *bp;
-    struct exfat_entry_upcase *entry;
-    struct exfat_upcase *upcase;
+    struct exfat_entry_upcase *upcase;
     uint32_t sector;
     int error;
 
@@ -96,52 +112,72 @@ exfat_init_upcase(struct exfat_mount *emp)
 
     error = bread(emp->devvp, sector, EXFAT_SECTOR_SIZE, NOCRED, &bp);
     if (error) {
+        if (bootverbose)
+            printf("exfat: failed to read root directory sector: %d\n", error);
         brelse(bp);
         return error;
     }
 
     /* Look for upcase table entry */
-    entry = (struct exfat_entry_upcase *)bp->b_data;
-    while (entry->type != EXFAT_ENTRY_UPCASE && entry->type != EXFAT_ENTRY_EOD) {
-        entry++;
-        if ((uint8_t *)entry >= (uint8_t *)bp->b_data + EXFAT_SECTOR_SIZE) {
+    upcase = (struct exfat_entry_upcase *)bp->b_data;
+    while (upcase->type != EXFAT_ENTRY_UPCASE && upcase->type != EXFAT_ENTRY_EOD) {
+        upcase++;
+        if ((uint8_t *)upcase >= (uint8_t *)bp->b_data + EXFAT_SECTOR_SIZE) {
+            if (bootverbose)
+                printf("exfat: upcase table entry not found\n");
             brelse(bp);
             return ENOENT;
         }
     }
 
-    if (entry->type == EXFAT_ENTRY_EOD) {
+    if (upcase->type == EXFAT_ENTRY_EOD) {
+        if (bootverbose)
+            printf("exfat: reached end of directory without finding upcase table\n");
         brelse(bp);
         return ENOENT;
     }
 
-    /* Allocate upcase structure */
-    upcase = malloc(sizeof(*upcase), M_EXFAT, M_WAITOK | M_ZERO);
-    upcase->size = le64toh(entry->data_length) / sizeof(uint16_t);
-    upcase->checksum = le32toh(entry->checksum);
+    if (bootverbose)
+        printf("exfat: found upcase table at cluster %u, size %lu bytes\n",
+               upcase->first_cluster, (unsigned long)upcase->data_length);
 
-    /* Store cluster number */
-    emp->upcase_cluster = le32toh(entry->first_cluster);
-    emp->upcase = upcase;
+    /* Allocate memory for upcase table */
+    struct exfat_upcase *up = malloc(sizeof(*up), M_EXFAT, M_WAITOK);
+    up->size = upcase->data_length / sizeof(uint16_t);
+    emp->upcase = up;
+
+    /* Read upcase table data */
+    error = exfat_read_upcase_table(emp, up);
+    if (error) {
+        if (bootverbose)
+            printf("exfat: failed to read upcase table data: %d\n", error);
+        free(up, M_EXFAT);
+        emp->upcase = NULL;
+        brelse(bp);
+        return error;
+    }
+
+    if (bootverbose)
+        printf("exfat: upcase table loaded successfully\n");
 
     brelse(bp);
-
-    /* Read the actual table */
-    return exfat_read_upcase_table(emp, upcase);
+    return 0;
 }
 
 /*
  * Clean up upcase table
  */
 void
-exfat_cleanup_upcase(struct exfat_mount *emp)
+exfat_unload_upcase_table(struct exfat_mount *emp)
 {
-    struct exfat_upcase *upcase = emp->upcase;
+    if (bootverbose)
+        printf("exfat: unloading upcase table\n");
 
-    if (upcase) {
-        if (upcase->table)
-            free(upcase->table, M_EXFAT);
-        free(upcase, M_EXFAT);
+    struct exfat_upcase *up = emp->upcase;
+    if (up) {
+        if (up->table)
+            free(up->table, M_EXFAT);
+        free(up, M_EXFAT);
         emp->upcase = NULL;
     }
 }
@@ -150,13 +186,23 @@ exfat_cleanup_upcase(struct exfat_mount *emp)
  * Convert character to uppercase
  */
 uint16_t
-exfat_upcase(struct exfat_mount *emp, uint16_t unicode)
+exfat_upcase(struct exfat_mount *emp, uint16_t c)
 {
-    struct exfat_upcase *upcase = emp->upcase;
+    struct exfat_upcase *up = emp->upcase;
+    
+    /* If no upcase table loaded, use simple ASCII conversion */
+    if (!up || !up->table) {
+        return (c >= 'a' && c <= 'z') ? c - 0x20 : c;
+    }
 
-    if (unicode < upcase->size)
-        return le16toh(upcase->table[unicode]);
-    return unicode;
+    /* Check if character is in range */
+    if (c >= up->size) {
+        if (bootverbose)
+            printf("exfat: character 0x%04x out of upcase table range\n", c);
+        return c;
+    }
+
+    return up->table[c];
 }
 
 /*
@@ -166,17 +212,30 @@ int
 exfat_name_compare(struct exfat_mount *emp, const uint16_t *name1,
                   const uint16_t *name2, size_t len)
 {
+    if (bootverbose)
+        printf("exfat: comparing names case-insensitively (len %zu)\n", len);
+
     size_t i;
 
     for (i = 0; i < len; i++) {
         uint16_t c1 = exfat_upcase(emp, le16toh(name1[i]));
         uint16_t c2 = exfat_upcase(emp, le16toh(name2[i]));
         
-        if (c1 < c2)
+        if (c1 < c2) {
+            if (bootverbose)
+                printf("exfat: name1 < name2 at position %zu (%04x < %04x)\n",
+                       i, c1, c2);
             return -1;
-        if (c1 > c2)
+        }
+        if (c1 > c2) {
+            if (bootverbose)
+                printf("exfat: name1 > name2 at position %zu (%04x > %04x)\n",
+                       i, c1, c2);
             return 1;
+        }
     }
 
+    if (bootverbose)
+        printf("exfat: names are equal\n");
     return 0;
 } 

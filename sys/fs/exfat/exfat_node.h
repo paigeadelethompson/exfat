@@ -47,10 +47,8 @@ struct exfat_node {
 /* Node hash function */
 #define EXFAT_NODE_HASH(c)     ((c) % EXFAT_NODES_HASH_SIZE)
 
-LIST_HEAD(exfat_node_list, exfat_node);
-
 struct exfat_node_hash {
-    LIST_HEAD(, exfat_node) lh_list;
+    LIST_HEAD(, exfat_node) head;
     int lh_count;
 };
 
@@ -59,8 +57,9 @@ extern struct exfat_node_hash exfat_node_hash[EXFAT_NODES_HASH_SIZE];
 extern struct mtx exfat_node_hash_mtx;
 
 /* Function prototypes */
-void exfat_node_init(void);
+int exfat_node_init(void);
 void exfat_node_uninit(void);
 int exfat_read_node_info(struct exfat_mount *emp, struct exfat_node *ep);
+void exfat_node_put(struct exfat_node *ep);
 
 #endif /* _FS_EXFAT_NODE_H_ */ 

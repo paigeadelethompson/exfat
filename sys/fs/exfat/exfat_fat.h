@@ -14,8 +14,24 @@
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
  */
- 
-/* FAT entry operations */
-int exfat_write_fat_entry(struct exfat_mount *emp, uint32_t cluster, uint32_t value);
-int exfat_read_fat_entry(struct exfat_mount *emp, uint32_t cluster, uint32_t *value);
-int exfat_update_bitmap(struct exfat_mount *emp, uint32_t cluster, int allocated); 
+
+#ifndef _FS_EXFAT_FAT_H_
+#define _FS_EXFAT_FAT_H_
+
+#include "exfat.h"
+
+/* FAT entry values */
+#define EXFAT_CLUSTER_FREE       0x00000000  /* Free cluster */
+#define EXFAT_CLUSTER_BAD        0xFFFFFFF7  /* Bad cluster */
+#define EXFAT_CLUSTER_END        0xFFFFFFFF  /* End of chain */
+
+/* Function prototypes */
+int exfat_fat_init(struct exfat_mount *emp);
+int exfat_fat_sync(struct exfat_mount *emp);
+uint32_t exfat_cluster_next(struct exfat_mount *emp, uint32_t cluster);
+int exfat_cluster_alloc(struct exfat_mount *emp, uint32_t *cluster);
+int exfat_cluster_free(struct exfat_mount *emp, uint32_t cluster);
+int exfat_cluster_link(struct exfat_mount *emp, uint32_t cluster, uint32_t next);
+int exfat_cluster_extend(struct exfat_mount *emp, uint32_t *cluster);
+
+#endif /* _FS_EXFAT_FAT_H_ */ 
