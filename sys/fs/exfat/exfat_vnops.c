@@ -329,11 +329,9 @@ exfat_getattr(struct vop_getattr_args *ap)
     vap->va_vaflags = 0;
 
     /* Remove from hash table */
-    mtx_lock(&exfat_node_hash_mtx);
+    mtx_lock(&emp->hash_mtx.mtx);
     LIST_REMOVE(ep, hash);
-    struct exfat_node_hash *hash = &exfat_node_hash[EXFAT_NODE_HASH(ep->cluster)];
-    hash->lh_count--;
-    mtx_unlock(&exfat_node_hash_mtx);
+    mtx_unlock(&emp->hash_mtx.mtx);
 
     return 0;
 }
@@ -344,13 +342,19 @@ exfat_getattr(struct vop_getattr_args *ap)
 static int
 exfat_inactive(struct vop_inactive_args *ap)
 {
-    if (bootverbose)
-        printf("exfat: inactivating vnode %p\n", ap->a_vp);
-
     struct vnode *vp = ap->a_vp;
+    struct exfat_node *ep = VTOE(vp);
+    struct exfat_mount *emp = VFSTOEXFAT(vp->v_mount);
+
+    if (bootverbose)
+        printf("exfat: deactivating vnode %p\n", vp);
+
+    mtx_lock(&emp->hash_mtx.mtx);
+    LIST_REMOVE(ep, hash);
+    mtx_unlock(&emp->hash_mtx.mtx);
 
     vp->v_data = NULL;
-    vgone(vp);
+    free(ep, M_EXFAT);
 
     return 0;
 }
@@ -361,22 +365,20 @@ exfat_inactive(struct vop_inactive_args *ap)
 static int
 exfat_reclaim(struct vop_reclaim_args *ap)
 {
-    if (bootverbose)
-        printf("exfat: reclaiming vnode %p\n", ap->a_vp);
-
     struct vnode *vp = ap->a_vp;
     struct exfat_node *ep = VTOE(vp);
+    struct exfat_mount *emp = VFSTOEXFAT(vp->v_mount);
 
-    /* Remove from hash table */
-    mtx_lock(&exfat_node_hash_mtx);
+    if (bootverbose)
+        printf("exfat: reclaiming vnode %p\n", vp);
+
+    mtx_lock(&emp->hash_mtx.mtx);
     LIST_REMOVE(ep, hash);
-    struct exfat_node_hash *hash = &exfat_node_hash[EXFAT_NODE_HASH(ep->cluster)];
-    hash->lh_count--;
-    mtx_unlock(&exfat_node_hash_mtx);
+    mtx_unlock(&emp->hash_mtx.mtx);
 
-    /* Free node */
-    free(ep, M_EXFAT);
+    /* Free resources */
     vp->v_data = NULL;
+    free(ep, M_EXFAT);
 
     return 0;
 }

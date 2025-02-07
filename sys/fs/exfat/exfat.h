@@ -24,6 +24,7 @@
 #include <sys/mount.h>
 #include <sys/vnode.h>
 #include <sys/time.h>   /* For struct timespec */
+#include "exfat_node.h"   /* For struct exfat_hash_mtx */
 
 /* Forward declarations */
 struct exfat_node;
@@ -86,6 +87,10 @@ struct exfat_mount {
     uint32_t mount_flags;            /* Mount flags */
     uint32_t error_count;            /* Count of I/O errors */
     struct timespec last_error_time;  /* Time of last error */
+    /* Node hash table */
+    LIST_HEAD(exfat_hashhead, exfat_node) *node_hash;
+    u_long node_hash_mask;
+    struct exfat_hash_mtx hash_mtx;
 };
 
 /* ExFAT Directory Entry Types */

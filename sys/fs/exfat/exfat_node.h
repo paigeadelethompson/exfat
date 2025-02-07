@@ -22,6 +22,9 @@
 #include <sys/queue.h>
 #include <sys/timespec.h>
 
+/* Forward declarations */
+struct exfat_mount;
+
 /* In-memory node structure */
 struct exfat_node {
     struct vnode    *vnode;         /* Associated vnode */
@@ -41,25 +44,29 @@ struct exfat_node {
 #define VTOE(vp)     ((struct exfat_node *)(vp)->v_data)
 #define ETOV(ep)     ((ep)->vnode)
 
-/* Node hash table size */
-#define EXFAT_NODES_HASH_SIZE   64
-
-/* Node hash function */
-#define EXFAT_NODE_HASH(c)     ((c) % EXFAT_NODES_HASH_SIZE)
-
-struct exfat_node_hash {
-    LIST_HEAD(, exfat_node) head;
-    int lh_count;
+/* Per-mount hash table mutex */
+struct exfat_hash_mtx {
+    struct mtx mtx;
 };
 
-/* Node hash table */
-extern struct exfat_node_hash exfat_node_hash[EXFAT_NODES_HASH_SIZE];
-extern struct mtx exfat_node_hash_mtx;
+/* Hash table entry */
+struct exfat_hash_entry {
+    LIST_ENTRY(exfat_hash_entry) next;  /* Hash chain */
+    struct exfat_node *node;            /* Node data */
+    uint32_t cluster;                   /* Cluster number (key) */
+};
+
+#define EXFAT_HASH_SIZE 64
+#define EXFAT_HASH_MASK (EXFAT_HASH_SIZE - 1)
 
 /* Function prototypes */
 int exfat_node_init(void);
 void exfat_node_uninit(void);
 int exfat_read_node_info(struct exfat_mount *emp, struct exfat_node *ep);
 void exfat_node_put(struct exfat_node *ep);
+int exfat_init_nodes(struct exfat_mount *emp);
+void exfat_destroy_nodes(struct exfat_mount *emp);
+struct exfat_node *exfat_node_lookup(struct exfat_mount *emp, uint32_t cluster);
+int exfat_node_insert(struct exfat_mount *emp, struct exfat_node *node);
 
 #endif /* _FS_EXFAT_NODE_H_ */ 

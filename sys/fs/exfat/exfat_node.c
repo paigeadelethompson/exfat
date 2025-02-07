@@ -30,30 +30,12 @@
 #include "exfat.h"
 #include "exfat_node.h"
 
-/* Node hash table */
-struct exfat_node_hash exfat_node_hash[EXFAT_NODES_HASH_SIZE];
-struct mtx exfat_node_hash_mtx;
-
 /*
  * Initialize the node hash table
  */
 int
 exfat_node_init(void)
 {
-    if (bootverbose)
-        printf("exfat: initializing node hash table\n");
-
-    /* Initialize hash table */
-    for (int i = 0; i < EXFAT_NODES_HASH_SIZE; i++) {
-        LIST_INIT(&exfat_node_hash[i].head);
-        exfat_node_hash[i].lh_count = 0;
-    }
-
-    /* Initialize mutex */
-    mtx_init(&exfat_node_hash_mtx, "exfat_node_hash", NULL, MTX_DEF);
-
-    if (bootverbose)
-        printf("exfat: node hash table initialized\n");
     return 0;
 }
 
@@ -63,10 +45,8 @@ exfat_node_init(void)
 void
 exfat_node_uninit(void)
 {
-    if (bootverbose)
-        printf("exfat: cleaning up node hash table\n");
-
-    mtx_destroy(&exfat_node_hash_mtx);
+    /* Nothing to do - cleanup happens in unmount */
+    return;
 }
 
 /*
@@ -84,12 +64,12 @@ exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
         printf("exfat: getting node for cluster %u\n", cluster);
 
     /* Check hash table first */
-    mtx_lock(&exfat_node_hash_mtx);
-    LIST_FOREACH(ep, &exfat_node_hash[EXFAT_NODE_HASH(cluster)].head, hash) {
+    mtx_lock(&emp->hash_mtx.mtx);
+    LIST_FOREACH(ep, &emp->node_hash[cluster & emp->node_hash_mask], hash) {
         if (ep->cluster == cluster && ETOV(ep)->v_mount == mp) {
             vp = ETOV(ep);
             VI_LOCK(vp);
-            mtx_unlock(&exfat_node_hash_mtx);
+            mtx_unlock(&emp->hash_mtx.mtx);
             error = vget(vp, LK_EXCLUSIVE | LK_RETRY);
             if (error)
                 return error;
@@ -99,7 +79,7 @@ exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
             return 0;
         }
     }
-    mtx_unlock(&exfat_node_hash_mtx);
+    mtx_unlock(&emp->hash_mtx.mtx);
 
     if (bootverbose)
         printf("exfat: creating new node\n");
@@ -124,10 +104,9 @@ exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
     }
 
     /* Add to hash table */
-    mtx_lock(&exfat_node_hash_mtx);
-    LIST_INSERT_HEAD(&exfat_node_hash[EXFAT_NODE_HASH(cluster)].head, ep, hash);
-    exfat_node_hash[EXFAT_NODE_HASH(cluster)].lh_count++;
-    mtx_unlock(&exfat_node_hash_mtx);
+    mtx_lock(&emp->hash_mtx.mtx);
+    LIST_INSERT_HEAD(&emp->node_hash[cluster & emp->node_hash_mask], ep, hash);
+    mtx_unlock(&emp->hash_mtx.mtx);
 
     *vpp = vp;
     if (bootverbose)
@@ -185,15 +164,81 @@ exfat_read_node_info(struct exfat_mount *emp, struct exfat_node *ep)
 void
 exfat_node_put(struct exfat_node *ep)
 {
+    struct mount *mp = ETOV(ep)->v_mount;
+    struct exfat_mount *emp = VFSTOEXFAT(mp);
+
     if (bootverbose)
         printf("exfat: releasing node for cluster %u\n", ep->cluster);
 
-    mtx_lock(&exfat_node_hash_mtx);
+    mtx_lock(&emp->hash_mtx.mtx);
     LIST_REMOVE(ep, hash);
-    exfat_node_hash[EXFAT_NODE_HASH(ep->cluster)].lh_count--;
-    mtx_unlock(&exfat_node_hash_mtx);
+    mtx_unlock(&emp->hash_mtx.mtx);
 
     free(ep, M_EXFAT);
     if (bootverbose)
         printf("exfat: node released\n");
+}
+
+int
+exfat_init_nodes(struct exfat_mount *emp)
+{
+    if (bootverbose)
+        printf("exfat: initializing node hash table\n");
+
+    /* Allocate hash table */
+    emp->node_hash = hashinit(EXFAT_HASH_SIZE, M_EXFAT, &emp->node_hash_mask);
+    if (emp->node_hash == NULL)
+        return ENOMEM;
+
+    /* Initialize mutex */
+    mtx_init(&emp->hash_mtx.mtx, "exfat_node_hash", NULL, MTX_DEF);
+
+    if (bootverbose)
+        printf("exfat: node hash table initialized\n");
+    return 0;
+}
+
+void
+exfat_destroy_nodes(struct exfat_mount *emp)
+{
+    if (bootverbose)
+        printf("exfat: destroying node hash table\n");
+
+    if (emp->node_hash) {
+        /* Free any remaining entries */
+        for (u_long i = 0; i <= emp->node_hash_mask; i++) {
+            struct exfat_node *node;
+            while ((node = LIST_FIRST(&emp->node_hash[i])) != NULL) {
+                LIST_REMOVE(node, hash);
+                free(node, M_EXFAT);
+            }
+        }
+        /* Free hash table */
+        hashdestroy(emp->node_hash, M_EXFAT, emp->node_hash_mask);
+        mtx_destroy(&emp->hash_mtx.mtx);
+        emp->node_hash = NULL;
+    }
+}
+
+/* Update node lookup function */
+struct exfat_node *
+exfat_node_lookup(struct exfat_mount *emp, uint32_t cluster)
+{
+    u_long hash = cluster & emp->node_hash_mask;
+    struct exfat_node *ep;
+
+    LIST_FOREACH(ep, &emp->node_hash[hash], hash) {
+        if (ep->cluster == cluster)
+            return ep;
+    }
+    return NULL;
+}
+
+/* Update node insert function */
+int
+exfat_node_insert(struct exfat_mount *emp, struct exfat_node *node)
+{
+    u_long hash = node->cluster & emp->node_hash_mask;
+    LIST_INSERT_HEAD(&emp->node_hash[hash], node, hash);
+    return 0;
 } 

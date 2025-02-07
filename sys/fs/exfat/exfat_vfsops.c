@@ -41,6 +41,7 @@
 #include <sys/malloc.h>
 #include <sys/conf.h>    /* For struct cdev */
 #include <geom/geom.h>
+#include <sys/mutex.h>
 
 #include "exfat.h"
 #include "exfat_fat.h"
@@ -130,6 +131,11 @@ exfat_find_bitmap(struct exfat_mount *emp, struct exfat_entry_bitmap *bitmap)
     brelse(bp);
     return ENOENT;
 }
+
+/* Track number of mounted filesystems */
+static volatile u_int exfat_mount_count = 0;
+static struct mtx exfat_mount_lock;
+MTX_SYSINIT(exfat_mount_lock, &exfat_mount_lock, "exfat_mount", MTX_DEF);
 
 /* Update the mount implementation to read the boot sector: */
 static int
@@ -308,6 +314,10 @@ exfat_mount(struct mount *mp)
         return error;
     }
 
+    mtx_lock(&exfat_mount_lock);
+    exfat_mount_count++;
+    mtx_unlock(&exfat_mount_lock);
+
     return 0;
 
 fail:
@@ -358,6 +368,10 @@ exfat_unmount(struct mount *mp, int mntflags)
     exfat_cleanup_upcase(emp);
     free(emp, M_EXFAT);
     mp->mnt_data = NULL;
+
+    mtx_lock(&exfat_mount_lock);
+    exfat_mount_count--;
+    mtx_unlock(&exfat_mount_lock);
 
     if (bootverbose)
         printf("exfat: unmount successful\n");
@@ -492,43 +506,5 @@ exfat_sync(struct mount *mp, int waitfor)
     return allerror;
 }
 
-static int
-exfat_modevent(module_t mod, int type, void *data)
-{
-    int error = 0;
-
-    switch (type) {
-    case MOD_LOAD:
-        error = exfat_node_init();
-        if (error)
-            return error;
-        break;
-    case MOD_UNLOAD:
-        error = vflush(NULL, 0, 0, curthread);
-        if (error)
-            return error;
-        exfat_node_uninit();
-        break;
-    default:
-        error = EOPNOTSUPP;
-        break;
-    }
-
-    return error;
-}
-
-static struct vfsconf exfat_vfsconf = {
-    .vfc_name = "exfat",
-    .vfc_vfsops = &exfat_vfsops,
-    .vfc_typenum = -1,
-    .vfc_flags = 0,
-};
-
-static moduledata_t exfat_mod = {
-    "exfat",              /* module name */
-    exfat_modevent,       /* event handler */
-    &exfat_vfsconf        /* extra data */
-};
-
-DECLARE_MODULE(exfat, exfat_mod, SI_SUB_VFS, SI_ORDER_MIDDLE);
+VFS_SET(exfat_vfsops, exfat, 0);
 MODULE_VERSION(exfat, 1); 
