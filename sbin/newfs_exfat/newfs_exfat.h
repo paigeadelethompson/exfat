@@ -51,7 +51,7 @@
 #define EXFAT_SECTOR_BITS          9
 #define EXFAT_MAX_NAMELEN          255
 #define EXFAT_LABEL_MAX_LEN        11
-#define EXFAT_UPCASE_SIZE          0xC6    /* Size of upcase table (198 entries) */
+#define EXFAT_UPCASE_SIZE          0x10000  /* Full Unicode BMP range */
 
 /* ExFAT boot sector constants */
 #define EXFAT_BOOT_SIGNATURE       0xAA55

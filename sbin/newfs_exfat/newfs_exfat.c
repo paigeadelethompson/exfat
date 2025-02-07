@@ -177,7 +177,10 @@ write_fat(struct mkfs_exfat_ctx *ctx)
 {
     uint32_t *fat;
     size_t fat_size;
-
+    size_t upcase_size = EXFAT_UPCASE_SIZE * sizeof(uint16_t);  /* 128KB */
+    size_t bytes_per_cluster = ctx->sectors_per_cluster * EXFAT_SECTOR_SIZE;
+    size_t upcase_clusters = (upcase_size + bytes_per_cluster - 1) / bytes_per_cluster;
+    
     report_progress(ctx, DEBUG_DETAIL, "Writing FAT (offset=%u, length=%u sectors)",
                    ctx->fat_offset, ctx->fat_length);
 
@@ -193,7 +196,13 @@ write_fat(struct mkfs_exfat_ctx *ctx)
     fat[0] = htole32(0xFFFFFFF8);  /* Media type */
     fat[1] = htole32(0xFFFFFFFF);  /* EOC */
     fat[ctx->bitmap_cluster] = htole32(0xFFFFFFFF);  /* Bitmap EOC */
-    fat[ctx->upcase_cluster] = htole32(0xFFFFFFFF);  /* Upcase EOC */
+
+    /* Create cluster chain for upcase table */
+    for (size_t i = 0; i < upcase_clusters - 1; i++) {
+        fat[ctx->upcase_cluster + i] = htole32(ctx->upcase_cluster + i + 1);
+    }
+    fat[ctx->upcase_cluster + upcase_clusters - 1] = htole32(0xFFFFFFFF);  /* Upcase EOC */
+
     fat[ctx->root_cluster] = htole32(0xFFFFFFFF);  /* Root EOC */
 
     /* Write FAT */
@@ -218,6 +227,9 @@ int
 write_bitmap(struct mkfs_exfat_ctx *ctx)
 {
     uint8_t *bitmap;
+    size_t upcase_size = EXFAT_UPCASE_SIZE * sizeof(uint16_t);
+    size_t bytes_per_cluster = ctx->sectors_per_cluster * EXFAT_SECTOR_SIZE;
+    size_t upcase_clusters = (upcase_size + bytes_per_cluster - 1) / bytes_per_cluster;
     int error;
 
     /* Allocate and clear bitmap buffer */
@@ -227,8 +239,8 @@ write_bitmap(struct mkfs_exfat_ctx *ctx)
         return -1;
     }
 
-    /* Mark system clusters as allocated (clusters 2-4) */
-    bitmap[0] = 0x07;  /* Bits 0-2 set (for clusters 2-4) */
+    /* Mark all system clusters as allocated */
+    bitmap[0] = 0x3F;  /* Bits 0-5 set (for clusters 2-7) */
 
     /* Write bitmap to its cluster */
     error = write_cluster(ctx, ctx->bitmap_cluster, bitmap);
@@ -244,11 +256,15 @@ static uint32_t
 calculate_upcase_checksum(const uint16_t *upcase, size_t size)
 {
     uint32_t checksum = 0;
+    const uint8_t *bytes = (const uint8_t *)upcase;
 
-    for (size_t i = 0; i < size; i++) {
-        if (upcase[i] == 0xFFFF)
-            break;
-        checksum = ((checksum << 31) | (checksum >> 1)) + le16toh(upcase[i]);
+    /* Process bytes exactly like boot sector checksum */
+    for (size_t i = 0; i < size * 2; i++) {
+        checksum = ((checksum << 31) | (checksum >> 1)) + bytes[i];
+        if (i < 32) {
+            printf("Checksum[%zu]: byte=%02x checksum=%08x\n", 
+                   i, bytes[i], checksum);
+        }
     }
 
     return checksum;
@@ -258,36 +274,116 @@ int
 write_upcase_table(struct mkfs_exfat_ctx *ctx)
 {
     uint16_t *upcase;
+    size_t upcase_size = EXFAT_UPCASE_SIZE * sizeof(uint16_t);
+    size_t bytes_per_cluster = ctx->sectors_per_cluster * EXFAT_SECTOR_SIZE;
     int error;
 
-    /* Allocate cluster-sized buffer and zero it */
-    uint8_t *cluster_buffer = calloc(1, ctx->sectors_per_cluster * EXFAT_SECTOR_SIZE);
-    if (!cluster_buffer) {
-        warn("Failed to allocate cluster buffer");
+    /* Allocate buffer for entire upcase table */
+    uint8_t *table_buffer = calloc(1, upcase_size);
+    if (!table_buffer) {
+        warn("Failed to allocate upcase table buffer");
         return -1;
     }
 
-    /* Allocate and initialize upcase table */
-    upcase = (uint16_t *)cluster_buffer;
+    /* Initialize upcase table */
+    upcase = (uint16_t *)table_buffer;
 
-    /* Initialize basic upcase table (0x0000 - 0x00C5) */
-    for (int i = 0; i < EXFAT_UPCASE_SIZE; i++) {
-        if (i >= 'a' && i <= 'z') {
-            upcase[i] = htole16(i - 32);  /* Convert lowercase to uppercase */
-        } else {
-            upcase[i] = htole16(i);       /* Keep other characters as-is */
+    /* First zero out the entire table */
+    memset(upcase, 0, upcase_size);
+
+    /* Fill all entries with identity mapping */
+    for (int i = 0; i < 0x10000; i++) {
+        upcase[i] = i;  /* Store in host byte order initially */
+    }
+
+    /* Apply uppercase mappings (in host byte order) */
+    for (int i = 'a'; i <= 'z'; i++) {
+        upcase[i] = i - 0x20;  /* ASCII uppercase */
+    }
+
+    /* Latin-1 Supplement */
+    for (int i = 0xE0; i <= 0xFE; i++) {
+        if (i != 0xF7)
+            upcase[i] = i - 0x20;
+    }
+
+    /* Latin Extended-A */
+    for (int i = 0x0100; i <= 0x017F; i++) {
+        if (i % 2 == 1)
+            upcase[i] = i - 1;
+    }
+
+    /* Latin Extended-B */
+    for (int i = 0x0180; i <= 0x024F; i++) {
+        if ((i >= 0x0180 && i <= 0x01CC) ||
+            (i >= 0x01DD && i <= 0x01F5) ||
+            (i >= 0x01F9 && i <= 0x021F) ||
+            (i >= 0x0223 && i <= 0x0233)) {
+            if (i % 2 == 1)
+                upcase[i] = i - 1;
         }
     }
 
-    /* Calculate checksum */
-    ctx->upcase_checksum = calculate_upcase_checksum(upcase, EXFAT_UPCASE_SIZE);
+    /* Cyrillic */
+    for (int i = 0x0430; i <= 0x044F; i++) {
+        upcase[i] = i - 0x20;
+    }
+
+    /* Greek */
+    for (int i = 0x03B1; i <= 0x03C9; i++) {
+        if (i != 0x03C2)
+            upcase[i] = i - 0x20;
+    }
+
+    /* Special cases */
+    upcase[0x00DF] = 0x0053; /* ß -> S */
+    upcase[0x00FF] = 0x0178; /* ÿ -> Ÿ */
+    upcase[0x0131] = 0x0049; /* ı -> I */
+    upcase[0x017F] = 0x0053; /* ſ -> S */
+
+    /* Calculate checksum before converting to little-endian */
+    ctx->upcase_checksum = calculate_upcase_checksum(upcase, 0x10000);
     report_progress(ctx, DEBUG_BASIC, "Upcase table checksum: %08x", ctx->upcase_checksum);
 
-    /* Write upcase table to cluster */
-    error = write_cluster(ctx, ctx->upcase_cluster, cluster_buffer);
+    /* Convert everything to little-endian after checksum */
+    for (int i = 0; i < 0x10000; i++) {
+        upcase[i] = htole16(upcase[i]);
+    }
 
-    free(cluster_buffer);
-    return error;
+    /* Mark end of table */
+    upcase[0xFFFF] = htole16(0xFFFF);
+
+    /* Debug output */
+    if (ctx->verbose >= DEBUG_DETAIL) {
+        printf("First 16 upcase entries:\n");
+        for (int i = 0; i < 16; i++) {
+            printf("  %04x -> %04x\n", i, le16toh(upcase[i]));
+        }
+        printf("ASCII lowercase mappings:\n");
+        for (int i = 'a'; i <= 'z'; i++) {
+            printf("  %04x -> %04x\n", i, le16toh(upcase[i]));
+        }
+    }
+
+    /* Write table */
+    uint8_t *p = table_buffer;
+    size_t remaining = upcase_size;
+    uint32_t cluster = ctx->upcase_cluster;
+
+    while (remaining > 0) {
+        size_t to_write = (remaining < bytes_per_cluster) ? remaining : bytes_per_cluster;
+        error = write_cluster(ctx, cluster, p);
+        if (error) {
+            free(table_buffer);
+            return error;
+        }
+        p += bytes_per_cluster;
+        remaining -= to_write;
+        cluster++;
+    }
+
+    free(table_buffer);
+    return 0;
 }
 
 int
@@ -402,10 +498,15 @@ init_filesystem(struct mkfs_exfat_ctx *ctx)
     ctx->cluster_count = 30459;
     ctx->sectors_per_cluster = 64;
 
-    /* Assign special clusters - make sure bitmap_cluster is valid */
-    ctx->bitmap_cluster = 2;     /* First cluster of bitmap */
-    ctx->upcase_cluster = 3;     /* First cluster of upcase table */
-    ctx->root_cluster = 4;       /* First cluster of root directory */
+    /* Calculate required clusters for upcase table */
+    size_t upcase_size = EXFAT_UPCASE_SIZE * sizeof(uint16_t);  /* 128KB */
+    size_t bytes_per_cluster = ctx->sectors_per_cluster * EXFAT_SECTOR_SIZE;
+    size_t upcase_clusters = (upcase_size + bytes_per_cluster - 1) / bytes_per_cluster;
+
+    /* Assign special clusters */
+    ctx->bitmap_cluster = 2;                    /* First cluster of bitmap */
+    ctx->upcase_cluster = 3;                    /* First cluster of upcase table */
+    ctx->root_cluster = 3 + upcase_clusters;    /* First cluster after upcase table */
 
     /* Validate cluster numbers */
     if (ctx->bitmap_cluster < 2 || ctx->bitmap_cluster >= ctx->cluster_count + 2) {
@@ -413,12 +514,23 @@ init_filesystem(struct mkfs_exfat_ctx *ctx)
         return -1;
     }
 
+    if (ctx->upcase_cluster < 2 || ctx->upcase_cluster + upcase_clusters > ctx->cluster_count + 2) {
+        warnx("Invalid upcase table cluster range");
+        return -1;
+    }
+
+    if (ctx->root_cluster < 2 || ctx->root_cluster >= ctx->cluster_count + 2) {
+        warnx("Invalid root directory cluster number");
+        return -1;
+    }
+
     report_progress(ctx, DEBUG_DETAIL, "Filesystem layout:");
     report_progress(ctx, DEBUG_DETAIL, "  FAT offset: %u sectors", ctx->fat_offset);
     report_progress(ctx, DEBUG_DETAIL, "  FAT length: %u sectors", ctx->fat_length);
-    report_progress(ctx, DEBUG_DETAIL, "  Cluster heap offset: %u sectors", 
-                   ctx->cluster_heap_offset);
+    report_progress(ctx, DEBUG_DETAIL, "  Cluster heap offset: %u sectors", ctx->cluster_heap_offset);
     report_progress(ctx, DEBUG_DETAIL, "  Cluster count: %u", ctx->cluster_count);
+    report_progress(ctx, DEBUG_DETAIL, "  Upcase table size: %zu bytes (%zu clusters)", 
+                   upcase_size, upcase_clusters);
 
     return 0;
 }
