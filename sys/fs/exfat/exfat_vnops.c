@@ -30,6 +30,8 @@
 
 #include "exfat.h"
 #include "exfat_node.h"
+#include "exfat_fat.h"
+#include "exfat_volume.h"
 
 static vop_lookup_t __unused exfat_lookup;
 static vop_read_t       exfat_read;
@@ -38,11 +40,11 @@ static vop_getattr_t    exfat_getattr;
 static vop_inactive_t   exfat_inactive;
 static vop_reclaim_t    exfat_reclaim;
 
-static int exfat_read_cluster(struct exfat_mount *emp, uint32_t cluster, char *buffer);
-static int exfat_write_cluster(struct exfat_mount *emp, uint32_t cluster, char *buffer);
+static int exfat_read_cluster(struct vnode *vp, struct exfat_mount *emp, uint32_t cluster, char *buffer);
+static int exfat_write_cluster(struct vnode *vp, struct exfat_mount *emp, uint32_t cluster, char *buffer);
 
 static int
-exfat_read_cluster(struct exfat_mount *emp, uint32_t cluster, char *buffer)
+exfat_read_cluster(struct vnode *vp, struct exfat_mount *emp, uint32_t cluster, char *buffer)
 {
     if (bootverbose)
         printf("exfat: reading cluster %u\n", cluster);
@@ -54,12 +56,63 @@ exfat_read_cluster(struct exfat_mount *emp, uint32_t cluster, char *buffer)
     sector = emp->boot.cluster_heap_offset +
              ((cluster - 2) << emp->boot.sectors_per_cluster_shift);
 
+    /* Scan cluster for bad sectors before reading */
+    error = exfat_scan_cluster(emp, cluster);
+    if (error) {
+        /* Cluster is bad - try to recover data */
+        if (bootverbose)
+            printf("exfat: attempting to recover data from bad cluster %u\n", cluster);
+        
+        /* Read sector by sector */
+        for (int i = 0; i < (1 << emp->boot.sectors_per_cluster_shift); i++) {
+            error = bread(emp->devvp, sector + i, EXFAT_SECTOR_SIZE, NOCRED, &bp);
+            if (error == 0) {
+                /* Verify sector checksums */
+                if (exfat_verify_sector(bp)) {
+                    if (bootverbose)
+                        printf("exfat: bad checksum in sector %jd\n",
+                               (intmax_t)(sector + i));
+                    exfat_handle_bad_sector(emp, sector + i);
+                    error = exfat_handle_error(emp, vp, EIO,
+                                             EXFAT_EH_READ | EXFAT_EH_CLUSTER);
+                    brelse(bp);
+                    return error;
+                }
+                /* Copy good sector */
+                memcpy(buffer + (i * EXFAT_SECTOR_SIZE), bp->b_data, EXFAT_SECTOR_SIZE);
+                brelse(bp);
+            } else {
+                /* Zero bad sector */
+                bzero(buffer + (i * EXFAT_SECTOR_SIZE), EXFAT_SECTOR_SIZE);
+            }
+        }
+        return EIO;  /* Return error even though we recovered some data */
+    }
+
     error = bread(emp->devvp, sector, emp->bytes_per_cluster, NOCRED, &bp);
     if (error) {
         if (bootverbose)
             printf("exfat: cluster read failed: %d\n", error);
+        /* Handle bad sector */
+        exfat_handle_bad_sector(emp, sector);
+        error = exfat_handle_error(emp, vp, error,
+                                 EXFAT_EH_READ | EXFAT_EH_CLUSTER);
         brelse(bp);
         return error;
+    }
+
+    /* Verify sector checksums */
+    for (int i = 0; i < (1 << emp->boot.sectors_per_cluster_shift); i++) {
+        if (exfat_verify_sector(bp + (i * EXFAT_SECTOR_SIZE))) {
+            if (bootverbose)
+                printf("exfat: bad checksum in sector %jd\n",
+                       (intmax_t)(sector + i));
+            exfat_handle_bad_sector(emp, sector + i);
+            error = exfat_handle_error(emp, vp, EIO,
+                                     EXFAT_EH_READ | EXFAT_EH_CLUSTER);
+            brelse(bp);
+            return error;
+        }
     }
 
     memcpy(buffer, bp->b_data, emp->bytes_per_cluster);
@@ -71,7 +124,7 @@ exfat_read_cluster(struct exfat_mount *emp, uint32_t cluster, char *buffer)
  * Write to a cluster
  */
 static int
-exfat_write_cluster(struct exfat_mount *emp, uint32_t cluster, char *buffer)
+exfat_write_cluster(struct vnode *vp, struct exfat_mount *emp, uint32_t cluster, char *buffer)
 {
     if (bootverbose)
         printf("exfat: writing cluster %u\n", cluster);
@@ -83,18 +136,62 @@ exfat_write_cluster(struct exfat_mount *emp, uint32_t cluster, char *buffer)
     sector = emp->boot.cluster_heap_offset +
              ((cluster - 2) << emp->boot.sectors_per_cluster_shift);
 
+    /* Check if cluster is marked bad */
+    error = exfat_cluster_next(emp, cluster);
+    if (error == EXFAT_CLUSTER_BAD) {
+        if (bootverbose)
+            printf("exfat: attempt to write to bad cluster %u\n", cluster);
+        return EIO;
+    }
+
+    /* Scan cluster before writing */
+    error = exfat_scan_cluster(emp, cluster);
+    if (error) {
+        /* Cluster is bad - try to reallocate */
+        uint32_t new_cluster;
+        error = exfat_cluster_alloc(emp, &new_cluster);
+        if (error)
+            return error;
+
+        /* Update cluster chain */
+        error = exfat_cluster_link(emp, cluster, new_cluster);
+        if (error) {
+            exfat_cluster_free(emp, new_cluster);
+            return error;
+        }
+
+        cluster = new_cluster;
+        sector = emp->boot.cluster_heap_offset +
+                 ((cluster - 2) << emp->boot.sectors_per_cluster_shift);
+    }
+
     error = bread(emp->devvp, sector, emp->bytes_per_cluster, NOCRED, &bp);
     if (error) {
         if (bootverbose)
             printf("exfat: cluster write failed: %d\n", error);
+        /* Handle bad sector */
+        exfat_handle_bad_sector(emp, sector);
+        error = exfat_handle_error(emp, vp, error,
+                                 EXFAT_EH_WRITE | EXFAT_EH_CLUSTER);
         brelse(bp);
         return error;
     }
 
     memcpy(bp->b_data, buffer, emp->bytes_per_cluster);
+
+    /* Update sector checksums */
+    for (int i = 0; i < (1 << emp->boot.sectors_per_cluster_shift); i++)
+        exfat_update_sector_checksum(bp + (i * EXFAT_SECTOR_SIZE));
+
     error = bwrite(bp);
-    if (error && bootverbose)
-        printf("exfat: cluster write failed: %d\n", error);
+    if (error) {
+        if (bootverbose)
+            printf("exfat: cluster write failed: %d\n", error);
+        /* Handle bad sector */
+        exfat_handle_bad_sector(emp, sector);
+        error = exfat_handle_error(emp, vp, error,
+                                 EXFAT_EH_WRITE | EXFAT_EH_CLUSTER);
+    }
 
     return error;
 }
@@ -148,7 +245,7 @@ exfat_read(struct vop_read_args *ap)
         size_t len;
 
         /* Read current cluster */
-        error = exfat_read_cluster(emp, cluster, cluster_buffer);
+        error = exfat_read_cluster(vp, emp, cluster, cluster_buffer);
         if (error)
             goto out;
 
@@ -312,75 +409,34 @@ exfat_write(struct vop_write_args *ap)
     struct exfat_mount *emp = VTOVFSMP(vp);
     struct exfat_node *ep = VTOE(vp);
     char *cluster_buffer;
-    uint32_t cluster, offset;
+    uint32_t cluster;
     size_t cluster_size = emp->bytes_per_cluster;
+    off_t file_size;
     int error = 0;
 
     /* Check if mounted read-only */
-    if (vp->v_mount->mnt_flag & MNT_RDONLY) {
-        if (bootverbose)
-            printf("exfat: write attempted on read-only filesystem\n");
+    if (vp->v_mount->mnt_flag & MNT_RDONLY)
         return EROFS;
-    }
 
-    /* Allocate temporary buffer for cluster data */
+    /* Allocate temporary buffer */
     cluster_buffer = malloc(cluster_size, M_TEMP, M_WAITOK);
 
-    /* Find starting cluster */
-    cluster = ep->finfo.first_cluster;
-    offset = uio->uio_offset;
-
-    /* Skip to the cluster containing our offset */
-    while (offset >= cluster_size) {
-        cluster = exfat_cluster_next(emp, cluster);
-        if (cluster == EXFAT_CLUSTER_END) {
-            /* Need to allocate new cluster */
-            uint32_t new_cluster;
-            error = exfat_cluster_alloc(emp, &new_cluster);
-            if (error)
-                goto out;
-            error = exfat_cluster_link(emp, cluster, new_cluster);
-            if (error)
-                goto out;
-            cluster = new_cluster;
-        }
-        offset -= cluster_size;
+    /* Handle writes past EOF */
+    file_size = ep->finfo.file_size;
+    if (uio->uio_offset + uio->uio_resid > file_size) {
+        error = exfat_extend_file(vp, uio->uio_offset + uio->uio_resid);
+        if (error)
+            goto out;
     }
 
-    /* Write clusters until done */
+    /* Write data */
     while (uio->uio_resid > 0) {
-        size_t len;
+        /* Find starting cluster */
+        cluster = ep->finfo.first_cluster;
+        off_t offset = uio->uio_offset;
 
-        /* Read existing cluster if we're not writing the whole thing */
-        if (offset > 0 || uio->uio_resid < cluster_size) {
-            error = exfat_read_cluster(emp, cluster, cluster_buffer);
-            if (error)
-                goto out;
-        }
-
-        /* Calculate how much to copy */
-        len = MIN(cluster_size - offset, uio->uio_resid);
-
-        /* Copy data from user buffer */
-        error = uiomove(cluster_buffer + offset, len, uio);
-        if (error)
-            goto out;
-
-        /* Write cluster back to disk */
-        error = exfat_write_cluster(emp, cluster, cluster_buffer);
-        if (error)
-            goto out;
-
-        /* Update file size if needed */
-        if (uio->uio_offset > ep->finfo.file_size) {
-            if (bootverbose)
-                printf("exfat: extending file size from %jd to %jd\n",
-                       (intmax_t)ep->finfo.file_size, (intmax_t)uio->uio_offset);
-            ep->finfo.file_size = uio->uio_offset;
-        }
-
-        /* Move to next cluster if needed */
-        if (uio->uio_resid > 0) {
+        /* Skip to the cluster containing our offset */
+        while (offset >= cluster_size) {
             cluster = exfat_cluster_next(emp, cluster);
             if (cluster == EXFAT_CLUSTER_END) {
                 /* Need to allocate new cluster */
@@ -393,19 +449,45 @@ exfat_write(struct vop_write_args *ap)
                     goto out;
                 cluster = new_cluster;
             }
-            offset = 0;
+            offset -= cluster_size;
         }
-    }
 
-    /* Update modify time */
-    if (error == 0) {
-        struct exfat_direntry_set es;
-        off_t dir_offset;
-        /* Find and update the directory entry */
-        error = exfat_find_dirent(vp, ep->cluster, &es, &dir_offset);
-        if (error == 0) {
-            exfat_update_timestamps(&es.file, EXFAT_UTIME_MODIFY);
-            error = exfat_write_direntry(vp, &es, dir_offset);
+        /* Read existing cluster if we're not writing the whole thing */
+        if (offset > 0 || uio->uio_resid < cluster_size) {
+            error = exfat_read_cluster(vp, emp, cluster, cluster_buffer);
+            if (error)
+                goto out;
+        }
+
+        /* Calculate how much to copy */
+        size_t len = MIN(cluster_size - offset, uio->uio_resid);
+
+        /* Copy data from user buffer */
+        error = uiomove(cluster_buffer + offset, len, uio);
+        if (error)
+            goto out;
+
+        /* Write cluster back to disk */
+        error = exfat_write_cluster(vp, emp, cluster, cluster_buffer);
+        if (error)
+            goto out;
+
+        /* Update file size if needed */
+        if (uio->uio_offset > ep->finfo.file_size) {
+            ep->finfo.file_size = uio->uio_offset;
+            
+            /* Update directory entry */
+            struct exfat_direntry_set es;
+            off_t dir_offset;
+            error = exfat_find_dirent(vp, ep->cluster, &es, &dir_offset);
+            if (error == 0) {
+                es.stream.data_length = ep->finfo.file_size;
+                es.stream.valid_data_length = ep->finfo.file_size;
+                exfat_update_timestamps(&es.file, EXFAT_UTIME_MODIFY);
+                error = exfat_write_direntry(vp, &es, dir_offset);
+                if (error)
+                    goto out;
+            }
         }
     }
 
@@ -424,8 +506,46 @@ exfat_create(struct vop_create_args *ap)
         printf("exfat: creating file '%s' in directory %p\n", 
                ap->a_cnp->cn_nameptr, ap->a_dvp);
 
-    /* For now, return read-only */
-    return EROFS;
+    struct vnode *dvp = ap->a_dvp;
+    struct vnode **vpp = ap->a_vpp;
+    struct componentname *cnp = ap->a_cnp;
+    struct exfat_mount *emp = VTOVFSMP(dvp);
+    struct timespec ts;
+    struct exfat_direntry_set es;
+    uint32_t cluster;
+    int error;
+
+    /* Check if mounted read-only */
+    if (dvp->v_mount->mnt_flag & MNT_RDONLY)
+        return EROFS;
+
+    /* Get current time */
+    vfs_timestamp(&ts);
+
+    /* Allocate first cluster */
+    error = exfat_cluster_alloc(emp, &cluster);
+    if (error)
+        return error;
+
+    /* Create directory entry */
+    error = exfat_create_entry(dvp, cnp->cn_nameptr, cnp->cn_namelen,
+                              EXFAT_ATTR_ARCHIVE, &ts, &es);
+    if (error) {
+        exfat_cluster_free(emp, cluster);
+        return error;
+    }
+
+    /* Update stream entry */
+    es.stream.first_cluster = cluster;
+    es.stream.data_length = 0;
+    es.stream.valid_data_length = 0;
+
+    /* Get vnode for new file */
+    error = exfat_get_node(dvp->v_mount, cluster, VREG, vpp);
+    if (error)
+        return error;
+
+    return 0;
 }
 
 /*
@@ -438,8 +558,53 @@ exfat_mkdir(struct vop_mkdir_args *ap)
         printf("exfat: creating directory '%s' in directory %p\n",
                ap->a_cnp->cn_nameptr, ap->a_dvp);
 
-    /* For now, return read-only */
-    return EROFS;
+    struct vnode *dvp = ap->a_dvp;
+    struct vnode **vpp = ap->a_vpp;
+    struct componentname *cnp = ap->a_cnp;
+    struct exfat_mount *emp = VTOVFSMP(dvp);
+    struct timespec ts;
+    struct exfat_direntry_set es;
+    uint32_t cluster;
+    int error;
+
+    /* Check if mounted read-only */
+    if (dvp->v_mount->mnt_flag & MNT_RDONLY)
+        return EROFS;
+
+    /* Get current time */
+    vfs_timestamp(&ts);
+
+    /* Allocate first cluster */
+    error = exfat_cluster_alloc(emp, &cluster);
+    if (error)
+        return error;
+
+    /* Create directory entry */
+    error = exfat_create_entry(dvp, cnp->cn_nameptr, cnp->cn_namelen,
+                              EXFAT_ATTR_DIRECTORY, &ts, &es);
+    if (error) {
+        exfat_cluster_free(emp, cluster);
+        return error;
+    }
+
+    /* Update stream entry */
+    es.stream.first_cluster = cluster;
+    es.stream.data_length = 0;
+    es.stream.valid_data_length = 0;
+
+    /* Initialize directory cluster with empty entries */
+    error = exfat_init_directory(emp, cluster);
+    if (error) {
+        exfat_cluster_free(emp, cluster);
+        return error;
+    }
+
+    /* Get vnode for new directory */
+    error = exfat_get_node(dvp->v_mount, cluster, VDIR, vpp);
+    if (error)
+        return error;
+
+    return 0;
 }
 
 /*
@@ -864,4 +1029,120 @@ struct vop_vector exfat_vnodeops = {
 // Add external function declarations
 int exfat_cluster_alloc(struct exfat_mount *emp, uint32_t *cluster);
 int exfat_cluster_link(struct exfat_mount *emp, uint32_t current, uint32_t next);
-int exfat_cluster_free(struct exfat_mount *emp, uint32_t cluster); 
+int exfat_cluster_free(struct exfat_mount *emp, uint32_t cluster);
+
+/*
+ * Extend file to specified size
+ */
+int
+exfat_extend_file(struct vnode *vp, off_t new_size)
+{
+    struct exfat_mount *emp = VTOVFSMP(vp);
+    struct exfat_node *ep = VTOE(vp);
+    uint32_t cluster = ep->finfo.first_cluster;
+    uint32_t needed_clusters;
+    int error;
+
+    if (bootverbose)
+        printf("exfat: extending file from %jd to %jd\n",
+               (intmax_t)ep->finfo.file_size, (intmax_t)new_size);
+
+    /* Calculate needed clusters */
+    needed_clusters = howmany(new_size, emp->bytes_per_cluster);
+    uint32_t current_clusters = howmany(ep->finfo.file_size, emp->bytes_per_cluster);
+
+    if (needed_clusters <= current_clusters)
+        return 0;
+
+    /* Allocate additional clusters */
+    error = exfat_cluster_alloc_sequence(emp, needed_clusters - current_clusters,
+                                       cluster == 0 ? &ep->finfo.first_cluster : NULL);
+    if (error)
+        return error;
+
+    return 0;
+}
+
+/*
+ * Initialize a new directory cluster
+ */
+int
+exfat_init_directory(struct exfat_mount *emp, uint32_t cluster)
+{
+    struct buf *bp;
+    int error;
+
+    /* Read cluster */
+    error = bread(emp->devvp,
+                 emp->boot.cluster_heap_offset +
+                 ((cluster - 2) << emp->boot.sectors_per_cluster_shift),
+                 emp->bytes_per_cluster, NOCRED, &bp);
+    if (error) {
+        brelse(bp);
+        return error;
+    }
+
+    /* Clear cluster */
+    bzero(bp->b_data, emp->bytes_per_cluster);
+
+    /* Write back */
+    error = bwrite(bp);
+
+    return error;
+}
+
+/* Error handling flags */
+#define EXFAT_EH_NONE      0x00
+#define EXFAT_EH_READ      0x01    /* Read error occurred */
+#define EXFAT_EH_WRITE     0x02    /* Write error occurred */
+#define EXFAT_EH_FAT       0x04    /* FAT corruption detected */
+#define EXFAT_EH_BITMAP    0x08    /* Bitmap inconsistency */
+#define EXFAT_EH_CLUSTER   0x10    /* Bad cluster detected */
+
+/*
+ * Handle I/O errors and attempt recovery
+ */
+int
+exfat_handle_error(struct exfat_mount *emp, struct vnode *vp, int error, int flags)
+{
+    if (bootverbose)
+        printf("exfat: handling error %d with flags 0x%x\n", error, flags);
+
+    /* Check if filesystem is marked dirty */
+    if (emp->boot.volume_state != EXFAT_STATE_DIRTY) {
+        /* Mark volume as dirty for recovery */
+        int err = exfat_set_volume_dirty(emp, 1);
+        if (err && bootverbose)
+            printf("exfat: failed to mark volume dirty: %d\n", err);
+    }
+
+    if (flags & EXFAT_EH_CLUSTER) {
+        uint32_t cluster = VTOE(vp)->cluster;
+        if (bootverbose)
+            printf("exfat: attempting to mark cluster %u as bad\n", cluster);
+        
+        /* Mark cluster as bad */
+        int err = exfat_mark_cluster_bad(emp, cluster);
+        if (err && bootverbose)
+            printf("exfat: failed to mark cluster as bad: %d\n", err);
+
+        /* Attempt to allocate replacement cluster */
+        uint32_t new_cluster;
+        err = exfat_cluster_alloc(emp, &new_cluster);
+        if (err == 0) {
+            /* Update file's cluster chain */
+            VTOE(vp)->cluster = new_cluster;
+            if (bootverbose)
+                printf("exfat: allocated replacement cluster %u\n", new_cluster);
+        }
+    }
+
+    if (flags & (EXFAT_EH_FAT | EXFAT_EH_BITMAP)) {
+        /* Schedule filesystem check */
+        emp->mount_flags |= EXFAT_MNT_FSCK;
+        if (bootverbose)
+            printf("exfat: filesystem check scheduled\n");
+    }
+
+    return error;
+} 

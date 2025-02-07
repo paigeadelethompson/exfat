@@ -20,6 +20,8 @@
 
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/buf.h>
+#include "exfat.h"
 
 /* Function prototypes */
 int exfat_read_volume_label(struct exfat_mount *emp);
@@ -49,5 +51,9 @@ int exfat_update_volume_time(struct exfat_mount *emp);
 
 /* Volume statistics */
 int exfat_update_percent_in_use(struct exfat_mount *emp);
+
+/* Sector checksum operations */
+int exfat_verify_sector(struct buf *bp);
+void exfat_update_sector_checksum(struct buf *bp);
 
 #endif /* _FS_EXFAT_VOLUME_H_ */ 

@@ -201,13 +201,25 @@ exfat_mount(struct mount *mp)
     emp->mp = mp;
     emp->devvp = devvp;
 
+    /* Initialize error tracking */
+    emp->error_count = 0;
+    vfs_timestamp(&emp->last_error_time);
+    emp->mount_flags = 0;
+
     /* Read boot sector */
     error = bread(devvp, 0, EXFAT_SECTOR_SIZE, NOCRED, &bp);
     if (error) {
         if (bootverbose)
             printf("exfat: failed to read boot sector: %d\n", error);
         brelse(bp);
-        return error;
+        goto fail;
+    }
+
+    /* Check if filesystem needs recovery */
+    if (emp->boot.volume_state == EXFAT_STATE_DIRTY) {
+        if (bootverbose)
+            printf("exfat: filesystem was not cleanly unmounted\n");
+        emp->mount_flags |= EXFAT_MNT_FSCK;
     }
 
     /* Copy boot sector */
@@ -218,7 +230,7 @@ exfat_mount(struct mount *mp)
     if (memcmp(emp->boot.fs_name, "EXFAT   ", 8) != 0) {
         if (bootverbose)
             printf("exfat: invalid filesystem signature\n");
-        return EINVAL;
+        goto fail;
     }
 
     if (bootverbose) {
@@ -241,7 +253,7 @@ exfat_mount(struct mount *mp)
     if (error) {
         if (bootverbose)
             printf("exfat: failed to find bitmap: %d\n", error);
-        return error;
+        goto fail;
     }
 
     if (bootverbose)
@@ -256,10 +268,15 @@ exfat_mount(struct mount *mp)
 
     /* Initialize allocation bitmap */
     error = exfat_init_bitmap(emp);
-    if (error) {
-        free(emp, M_EXFAT);
-        return error;
-    }
+    if (error)
+        goto fail;
+
+    /* Scan first few clusters for bad sectors */
+    if (bootverbose)
+        printf("exfat: scanning first 1000 clusters for bad sectors\n");
+    error = exfat_scan_clusters(emp, 2, MIN(1000, emp->boot.cluster_count));
+    if (error && bootverbose)
+        printf("exfat: bad sectors found during initial scan\n");
 
     /* Initialize upcase table */
     error = exfat_init_upcase(emp);
@@ -292,6 +309,15 @@ exfat_mount(struct mount *mp)
     }
 
     return 0;
+
+fail:
+    exfat_cleanup_upcase(emp);
+    free(emp, M_EXFAT);
+    mp->mnt_data = NULL;
+
+    if (bootverbose)
+        printf("exfat: mount failed\n");
+    return error;
 }
 
 /*
@@ -306,26 +332,18 @@ exfat_unmount(struct mount *mp, int mntflags)
     struct exfat_mount *emp = VFSTOEXFAT(mp);
     int error;
 
-    /* Update percent-in-use before unmounting */
-    if ((mp->mnt_flag & MNT_RDONLY) == 0) {
+    /* Check if filesystem needs repair */
+    if (emp->mount_flags & (EXFAT_MNT_FSCK | EXFAT_MNT_ERRORS)) {
         if (bootverbose)
-            printf("exfat: updating percent-in-use\n");
-        error = exfat_update_percent_in_use(emp);
-        if (error) {
-            if (bootverbose)
-                printf("exfat: failed to update percent-in-use: %d\n", error);
-            return error;
-        }
+            printf("exfat: filesystem needs repair (%u errors)\n", 
+                   emp->error_count);
+    }
 
-        /* Mark volume as clean */
-        if (bootverbose)
-            printf("exfat: marking volume clean\n");
+    /* Mark volume clean unless errors occurred */
+    if ((emp->mount_flags & EXFAT_MNT_ERRORS) == 0) {
         error = exfat_set_volume_dirty(emp, 0);
-        if (error) {
-            if (bootverbose)
-                printf("exfat: failed to mark volume clean: %d\n", error);
-            return error;
-        }
+        if (error && bootverbose)
+            printf("exfat: failed to mark volume clean: %d\n", error);
     }
 
     if (bootverbose)
@@ -343,7 +361,7 @@ exfat_unmount(struct mount *mp, int mntflags)
 
     if (bootverbose)
         printf("exfat: unmount successful\n");
-    return 0;
+    return error;
 }
 
 /*
@@ -503,7 +521,7 @@ static struct vfsconf exfat_vfsconf = {
     .vfc_name = "exfat",
     .vfc_vfsops = &exfat_vfsops,
     .vfc_typenum = -1,
-    .vfc_flags = VFCF_READONLY,
+    .vfc_flags = 0,
 };
 
 static moduledata_t exfat_mod = {

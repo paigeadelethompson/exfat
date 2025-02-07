@@ -83,6 +83,9 @@ struct exfat_mount {
     uint8_t  volume_label_len;   /* Length of volume label */
     uint32_t bitmap_sectors;      /* Number of sectors in bitmap */
     uint32_t clusters_count;     /* Total number of clusters */
+    uint32_t mount_flags;            /* Mount flags */
+    uint32_t error_count;            /* Count of I/O errors */
+    struct timespec last_error_time;  /* Time of last error */
 };
 
 /* ExFAT Directory Entry Types */
@@ -194,7 +197,7 @@ struct exfat_file_info {
 };
 
 /* Function prototypes */
-uint32_t exfat_cluster_next(struct exfat_mount *emp, uint32_t cluster);
+int exfat_cluster_next(struct exfat_mount *emp, uint32_t cluster);
 int exfat_cluster_alloc(struct exfat_mount *emp, uint32_t *cluster);
 int exfat_cluster_free(struct exfat_mount *emp, uint32_t cluster);
 int exfat_cluster_link(struct exfat_mount *emp, uint32_t cluster, uint32_t next);
@@ -311,11 +314,18 @@ MALLOC_DECLARE(M_EXFAT);
 int exfat_init_bitmap(struct exfat_mount *emp);
 int exfat_init_upcase(struct exfat_mount *emp);
 void exfat_cleanup_upcase(struct exfat_mount *emp);
+int exfat_scan_cluster(struct exfat_mount *emp, uint32_t cluster);
+int exfat_scan_clusters(struct exfat_mount *emp, uint32_t start, uint32_t count);
 int exfat_read_volume_label(struct exfat_mount *emp);
 int exfat_write_volume_label(struct exfat_mount *emp, const char *label, size_t len);
 int exfat_validate_label(const char *label, size_t len);
 int exfat_update_percent_in_use(struct exfat_mount *emp);
 int exfat_set_volume_dirty(struct exfat_mount *emp, int dirty);
+
+/* Sector checksum operations */
+int exfat_verify_sector(struct buf *bp);
+void exfat_update_sector_checksum(struct buf *bp);
+int exfat_handle_bad_sector(struct exfat_mount *emp, daddr_t sector);
 
 /* Device access macro */
 #define EXFAT_DEV(mp)    (VFSTOEXFAT(mp)->devvp)
@@ -323,5 +333,23 @@ int exfat_set_volume_dirty(struct exfat_mount *emp, int dirty);
 /* Time conversion functions */
 void unix_time_to_exfat(const struct timespec *ts, uint32_t *date, uint32_t *time);
 void exfat_time_to_unix(uint32_t date, uint32_t time, struct timespec *ts);
+
+/* Mount flags */
+#define EXFAT_MNT_FSCK     0x0001    /* Filesystem check needed */
+#define EXFAT_MNT_REPAIR   0x0002    /* Filesystem repair in progress */
+#define EXFAT_MNT_ERRORS   0x0004    /* Filesystem has errors */
+
+/* Error handling flags */
+#define EXFAT_EH_NONE      0x00
+#define EXFAT_EH_READ      0x01    /* Read error occurred */
+#define EXFAT_EH_WRITE     0x02    /* Write error occurred */
+#define EXFAT_EH_FAT       0x04    /* FAT corruption detected */
+#define EXFAT_EH_BITMAP    0x08    /* Bitmap inconsistency */
+#define EXFAT_EH_CLUSTER   0x10    /* Bad cluster detected */
+
+/* Function prototypes */
+int exfat_handle_error(struct exfat_mount *emp, struct vnode *vp, int error, int flags);
+int exfat_extend_file(struct vnode *vp, off_t new_size);
+int exfat_init_directory(struct exfat_mount *emp, uint32_t cluster);
 
 #endif /* _FS_EXFAT_H_ */ 

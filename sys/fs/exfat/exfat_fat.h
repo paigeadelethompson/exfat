@@ -28,10 +28,17 @@
 /* Function prototypes */
 int exfat_fat_init(struct exfat_mount *emp);
 int exfat_fat_sync(struct exfat_mount *emp);
-uint32_t exfat_cluster_next(struct exfat_mount *emp, uint32_t cluster);
+int exfat_fat_read(struct exfat_mount *emp, uint32_t cluster, uint32_t *next);
+int exfat_fat_write(struct exfat_mount *emp, uint32_t cluster, uint32_t next);
 int exfat_cluster_alloc(struct exfat_mount *emp, uint32_t *cluster);
 int exfat_cluster_free(struct exfat_mount *emp, uint32_t cluster);
+int exfat_cluster_next(struct exfat_mount *emp, uint32_t cluster);
 int exfat_cluster_link(struct exfat_mount *emp, uint32_t cluster, uint32_t next);
 int exfat_cluster_extend(struct exfat_mount *emp, uint32_t *cluster);
+
+/* Cluster allocation and bad sector handling */
+int exfat_cluster_alloc_sequence(struct exfat_mount *emp, uint32_t count, 
+                                uint32_t *first_cluster);
+int exfat_mark_cluster_bad(struct exfat_mount *emp, uint32_t cluster);
 
 #endif /* _FS_EXFAT_FAT_H_ */ 

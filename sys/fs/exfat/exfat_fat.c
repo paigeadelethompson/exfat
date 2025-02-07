@@ -30,7 +30,7 @@
 /*
  * Read a FAT entry
  */
-static int
+int
 exfat_fat_read(struct exfat_mount *emp, uint32_t cluster, uint32_t *next)
 {
     if (bootverbose)
@@ -63,7 +63,7 @@ exfat_fat_read(struct exfat_mount *emp, uint32_t cluster, uint32_t *next)
 /*
  * Write a FAT entry
  */
-static int
+int
 exfat_fat_write(struct exfat_mount *emp, uint32_t cluster, uint32_t next)
 {
     if (bootverbose)
@@ -278,7 +278,7 @@ exfat_cluster_extend(struct exfat_mount *emp, uint32_t *cluster)
 /*
  * Get next cluster in chain
  */
-uint32_t
+int
 exfat_cluster_next(struct exfat_mount *emp, uint32_t cluster)
 {
     uint32_t next;
@@ -286,7 +286,93 @@ exfat_cluster_next(struct exfat_mount *emp, uint32_t cluster)
 
     error = exfat_fat_read(emp, cluster, &next);
     if (error)
-        return EXFAT_CLUSTER_END;
+        return error;
 
-    return next;
+    return (next == EXFAT_CLUSTER_END) ? error : next;
+}
+
+/*
+ * Allocate a sequence of clusters and link them together
+ */
+int
+exfat_cluster_alloc_sequence(struct exfat_mount *emp, uint32_t count, uint32_t *first_cluster)
+{
+    uint32_t current = 0, prev = 0;
+    int error;
+
+    if (bootverbose)
+        printf("exfat: allocating sequence of %u clusters\n", count);
+
+    /* Allocate first cluster */
+    error = exfat_cluster_alloc(emp, &current);
+    if (error)
+        return error;
+
+    *first_cluster = current;
+    prev = current;
+
+    /* Allocate and link remaining clusters */
+    for (uint32_t i = 1; i < count; i++) {
+        error = exfat_cluster_alloc(emp, &current);
+        if (error) {
+            /* Free already allocated clusters */
+            exfat_cluster_free(emp, *first_cluster);
+            return error;
+        }
+
+        /* Link to previous cluster */
+        error = exfat_cluster_link(emp, prev, current);
+        if (error) {
+            exfat_cluster_free(emp, current);
+            exfat_cluster_free(emp, *first_cluster);
+            return error;
+        }
+
+        prev = current;
+    }
+
+    /* Mark end of chain */
+    error = exfat_cluster_link(emp, current, EXFAT_CLUSTER_END);
+    if (error) {
+        exfat_cluster_free(emp, *first_cluster);
+        return error;
+    }
+
+    if (bootverbose)
+        printf("exfat: allocated cluster sequence starting at %u\n", *first_cluster);
+
+    return 0;
+}
+
+/*
+ * Mark a cluster as bad in both FAT and bitmap
+ */
+int
+exfat_mark_cluster_bad(struct exfat_mount *emp, uint32_t cluster)
+{
+    int error;
+
+    if (bootverbose)
+        printf("exfat: marking cluster %u as bad\n", cluster);
+
+    /* First mark it as free in bitmap */
+    error = exfat_bitmap_set(emp, cluster, 0);
+    if (error) {
+        if (bootverbose)
+            printf("exfat: failed to update bitmap for bad cluster: %d\n", error);
+        return error;
+    }
+
+    /* Then mark it as bad in FAT */
+    error = exfat_fat_write(emp, cluster, EXFAT_CLUSTER_BAD);
+    if (error) {
+        if (bootverbose)
+            printf("exfat: failed to mark cluster as bad in FAT: %d\n", error);
+        return error;
+    }
+
+    if (bootverbose)
+        printf("exfat: cluster %u marked as bad\n", cluster);
+
+    return 0;
 } 

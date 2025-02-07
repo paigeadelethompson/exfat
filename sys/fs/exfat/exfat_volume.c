@@ -26,6 +26,7 @@
 
 #include "exfat.h"
 #include "exfat_volume.h"
+#include "exfat_fat.h"
 
 /* Forward declarations */
 static int exfat_read_boot_sector(struct exfat_mount *emp);
@@ -142,6 +143,8 @@ exfat_write_volume_label(struct exfat_mount *emp, const char *label, size_t len)
     entry->character_count = outused;
 
     /* Write back */
+    memcpy(bp->b_data, &emp->boot, sizeof(struct exfat_boot_record));
+    exfat_update_sector_checksum(bp);
     error = bwrite(bp);
 
     /* Update mount structure */
@@ -719,6 +722,7 @@ exfat_update_percent_in_use(struct exfat_mount *emp)
     }
 
     memcpy(bp->b_data, &emp->boot, sizeof(struct exfat_boot_record));
+    exfat_update_sector_checksum(bp);
     error = bwrite(bp);
     if (error) {
         if (bootverbose)
@@ -752,6 +756,16 @@ exfat_read_boot_sector(struct exfat_mount *emp)
 
     /* Copy and validate boot sector */
     memcpy(&emp->boot, bp->b_data, sizeof(struct exfat_boot_record));
+    
+    /* Verify sector checksum */
+    error = exfat_verify_sector(bp);
+    if (error) {
+        if (bootverbose)
+            printf("exfat: boot sector checksum verification failed\n");
+        brelse(bp);
+        return error;
+    }
+    
     brelse(bp);
 
     /* Check signature */
@@ -775,4 +789,145 @@ exfat_read_boot_sector(struct exfat_mount *emp)
     }
 
     return 0;
+}
+
+/*
+ * Verify sector checksum
+ */
+int
+exfat_verify_sector(struct buf *bp)
+{
+    uint32_t checksum = 0;
+    uint8_t *data = bp->b_data;
+    int i;
+
+    /* Calculate checksum of sector data */
+    for (i = 0; i < EXFAT_SECTOR_SIZE - 4; i++)
+        checksum = ((checksum << 31) | (checksum >> 1)) + data[i];
+
+    /* Compare with stored checksum */
+    uint32_t stored = le32dec(data + EXFAT_SECTOR_SIZE - 4);
+    return (checksum == stored) ? 0 : EIO;
+}
+
+/*
+ * Update sector checksum
+ */
+void
+exfat_update_sector_checksum(struct buf *bp)
+{
+    uint32_t checksum = 0;
+    uint8_t *data = bp->b_data;
+    int i;
+
+    /* Calculate new checksum */
+    for (i = 0; i < EXFAT_SECTOR_SIZE - 4; i++)
+        checksum = ((checksum << 31) | (checksum >> 1)) + data[i];
+
+    /* Store checksum */
+    le32enc(data + EXFAT_SECTOR_SIZE - 4, checksum);
+}
+
+/*
+ * Handle bad sector
+ */
+int
+exfat_handle_bad_sector(struct exfat_mount *emp, daddr_t sector)
+{
+    if (bootverbose)
+        printf("exfat: handling bad sector %jd\n", (intmax_t)sector);
+
+    /* Convert sector to cluster */
+    uint32_t cluster;
+    if (sector >= emp->boot.cluster_heap_offset) {
+        cluster = 2 + ((sector - emp->boot.cluster_heap_offset) >>
+                      emp->boot.sectors_per_cluster_shift);
+        
+        /* Mark cluster as bad */
+        int error = exfat_mark_cluster_bad(emp, cluster);
+        if (error && bootverbose)
+            printf("exfat: failed to mark cluster %u as bad: %d\n", 
+                   cluster, error);
+
+        /* Update error statistics */
+        emp->error_count++;
+        vfs_timestamp(&emp->last_error_time);
+        emp->mount_flags |= EXFAT_MNT_ERRORS;
+
+        return error;
+    }
+
+    /* Critical sector (boot/FAT/etc) - mark filesystem for check */
+    emp->mount_flags |= EXFAT_MNT_FSCK;
+    return EIO;
+}
+
+/*
+ * Check if a sector is bad by attempting to read it
+ */
+static int
+exfat_check_sector(struct exfat_mount *emp, daddr_t sector)
+{
+    struct buf *bp;
+    int error;
+
+    error = bread(emp->devvp, sector, EXFAT_SECTOR_SIZE, NOCRED, &bp);
+    if (error) {
+        brelse(bp);
+        return 1;  /* Bad sector */
+    }
+
+    brelse(bp);
+    return 0;  /* Good sector */
+}
+
+/*
+ * Scan a cluster for bad sectors
+ */
+int
+exfat_scan_cluster(struct exfat_mount *emp, uint32_t cluster)
+{
+    daddr_t sector;
+    int i, bad_sectors = 0;
+
+    sector = emp->boot.cluster_heap_offset +
+             ((cluster - 2) << emp->boot.sectors_per_cluster_shift);
+
+    /* Check each sector in the cluster */
+    for (i = 0; i < (1 << emp->boot.sectors_per_cluster_shift); i++) {
+        if (exfat_check_sector(emp, sector + i)) {
+            bad_sectors++;
+            if (bootverbose)
+                printf("exfat: bad sector %jd in cluster %u\n",
+                       (intmax_t)(sector + i), cluster);
+        }
+    }
+
+    /* If any sectors are bad, mark the whole cluster as bad */
+    if (bad_sectors > 0) {
+        if (bootverbose)
+            printf("exfat: marking cluster %u as bad (%d bad sectors)\n",
+                   cluster, bad_sectors);
+        return exfat_mark_cluster_bad(emp, cluster);
+    }
+
+    return 0;
+}
+
+/*
+ * Scan a range of clusters for bad sectors
+ */
+int
+exfat_scan_clusters(struct exfat_mount *emp, uint32_t start, uint32_t count)
+{
+    uint32_t cluster;
+    int error = 0;
+
+    for (cluster = start; cluster < start + count; cluster++) {
+        error = exfat_scan_cluster(emp, cluster);
+        if (error && bootverbose)
+            printf("exfat: error scanning cluster %u: %d\n", cluster, error);
+    }
+
+    return error;
 } 
