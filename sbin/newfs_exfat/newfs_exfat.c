@@ -451,11 +451,9 @@ init_filesystem(struct mkfs_exfat_ctx *ctx)
 #ifndef __APPLE__
     struct stat st;  /* Only declare if not on Apple */
 #endif
-    off_t size;
-    int ret;
-
-    /* Get device size */
+    off_t size;    /* Get device size */
 #ifdef __APPLE__
+    int ret;
     uint32_t block_size;
     uint64_t blocks;
 
