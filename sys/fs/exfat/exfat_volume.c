@@ -695,10 +695,10 @@ exfat_update_percent_in_use(struct exfat_mount *emp)
 }
 
 /* Add function prototypes */
-static int exfat_read_boot_record(struct exfat_mount *emp);
-static int exfat_check_volume_dirty(struct exfat_mount *emp);
+static int __unused exfat_read_boot_record(struct exfat_mount *emp);
+static int __unused exfat_check_volume_dirty(struct exfat_mount *emp);
 
-static int
+static int __unused
 exfat_read_boot_record(struct exfat_mount *emp)
 {
     struct buf *bp;
@@ -716,4 +716,10 @@ exfat_read_boot_record(struct exfat_mount *emp)
     brelse(bp);
 
     return 0;
+}
+
+static int __unused
+exfat_check_volume_dirty(struct exfat_mount *emp)
+{
+    // ...
 } 

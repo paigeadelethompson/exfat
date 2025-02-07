@@ -28,7 +28,7 @@
 /*
  * Get extended attribute
  */
-static int
+static int __unused
 exfat_getextattr(struct vop_getextattr_args *ap)
 {
     (void)ap->a_vp;
@@ -46,7 +46,7 @@ exfat_getextattr(struct vop_getextattr_args *ap)
 /*
  * Set extended attribute
  */
-static int
+static int __unused
 exfat_setextattr(struct vop_setextattr_args *ap)
 {
     (void)ap->a_vp;
@@ -63,7 +63,7 @@ exfat_setextattr(struct vop_setextattr_args *ap)
 /*
  * List extended attributes
  */
-static int
+static int __unused
 exfat_listextattr(struct vop_listextattr_args *ap)
 {
     (void)ap->a_vp;

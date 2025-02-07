@@ -308,7 +308,7 @@ exfat_sync(struct mount *mp, int waitfor)
     return allerror;
 }
 
-static int
+static int __unused
 exfat_modevent(module_t mod, int type, void *data)
 {
     int error = 0;

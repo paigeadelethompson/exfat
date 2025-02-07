@@ -30,7 +30,7 @@
 #include "exfat.h"
 #include "exfat_node.h"
 
-static vop_lookup_t     exfat_lookup;
+static vop_lookup_t __unused exfat_lookup;
 static vop_read_t       exfat_read;
 static vop_write_t      exfat_write;
 static vop_getattr_t    exfat_getattr;

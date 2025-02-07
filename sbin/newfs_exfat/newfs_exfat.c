@@ -227,22 +227,17 @@ int
 write_bitmap(struct mkfs_exfat_ctx *ctx)
 {
     uint8_t *bitmap;
-    size_t upcase_size = EXFAT_UPCASE_SIZE * sizeof(uint16_t);
     size_t bytes_per_cluster = ctx->sectors_per_cluster * EXFAT_SECTOR_SIZE;
-    size_t upcase_clusters = (upcase_size + bytes_per_cluster - 1) / bytes_per_cluster;
     int error;
 
     /* Allocate and clear bitmap buffer */
-    bitmap = calloc(1, ctx->sectors_per_cluster * EXFAT_SECTOR_SIZE);
+    bitmap = calloc(1, bytes_per_cluster);
     if (!bitmap) {
         warn("Failed to allocate bitmap buffer");
         return -1;
     }
 
-    /* Mark all system clusters as allocated */
-    bitmap[0] = 0x3F;  /* Bits 0-5 set (for clusters 2-7) */
-
-    /* Write bitmap to its cluster */
+    /* Write bitmap cluster */
     error = write_cluster(ctx, ctx->bitmap_cluster, bitmap);
 
     free(bitmap);
