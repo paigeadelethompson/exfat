@@ -388,7 +388,7 @@ write_root_dir(struct mkfs_exfat_ctx *ctx, const void *entry, size_t size)
     struct exfat_entry_bitmap *bitmap;
     struct exfat_entry_upcase *upcase;
     struct exfat_entry_label *label;
-    int ret = 0;
+    int error;
 
     if (!cluster_buffer) {
         warn("Failed to allocate cluster buffer");
@@ -436,13 +436,13 @@ write_root_dir(struct mkfs_exfat_ctx *ctx, const void *entry, size_t size)
                    upcase->type, le32toh(upcase->first_cluster), le32toh(upcase->checksum));
 
     /* Write the cluster */
-    ret = write_cluster(ctx, ctx->root_cluster, cluster_buffer);
+    error = write_cluster(ctx, ctx->root_cluster, cluster_buffer);
 
     free(cluster_buffer);
-    if (ret == 0) {
+    if (error == 0) {
         report_progress(ctx, DEBUG_BASIC, "Root directory written successfully");
     }
-    return ret;
+    return error;
 }
 
 static int
