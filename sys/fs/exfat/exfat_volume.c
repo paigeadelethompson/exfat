@@ -930,4 +930,93 @@ exfat_scan_clusters(struct exfat_mount *emp, uint32_t start, uint32_t count)
     }
 
     return error;
+}
+
+/*
+ * Clean up upcase table resources
+ */
+void
+exfat_cleanup_upcase(struct exfat_mount *emp)
+{
+    if (bootverbose)
+        printf("exfat: cleaning up upcase table\n");
+
+    /* Free upcase table if allocated */
+    if (emp->upcase) {
+        free(emp->upcase, M_EXFAT);
+        emp->upcase = NULL;
+    }
+}
+
+/*
+ * Initialize upcase table
+ */
+int
+exfat_init_upcase(struct exfat_mount *emp)
+{
+    struct buf *bp;
+    struct exfat_entry_upcase *entry;
+    uint32_t sector;
+    int error;
+
+    if (bootverbose)
+        printf("exfat: initializing upcase table\n");
+
+    /* Read first sector of root directory */
+    sector = emp->boot.cluster_heap_offset +
+             ((emp->root_cluster - 2) << emp->boot.sectors_per_cluster_shift);
+
+    error = bread(emp->devvp, sector, EXFAT_SECTOR_SIZE, NOCRED, &bp);
+    if (error) {
+        brelse(bp);
+        return error;
+    }
+
+    /* Look for upcase table entry */
+    entry = (struct exfat_entry_upcase *)bp->b_data;
+    while (entry->type != EXFAT_ENTRY_UPCASE && entry->type != EXFAT_ENTRY_EOD) {
+        entry++;
+        if ((uint8_t *)entry >= (uint8_t *)bp->b_data + EXFAT_SECTOR_SIZE) {
+            brelse(bp);
+            return ENOENT;
+        }
+    }
+
+    if (entry->type == EXFAT_ENTRY_EOD) {
+        brelse(bp);
+        return ENOENT;
+    }
+
+    /* Store upcase table information */
+    emp->upcase_cluster = le32toh(entry->first_cluster);
+    uint64_t upcase_size = le64toh(entry->data_length);
+
+    /* Allocate memory for upcase table */
+    emp->upcase = malloc(upcase_size, M_EXFAT, M_WAITOK);
+    if (emp->upcase == NULL) {
+        brelse(bp);
+        return ENOMEM;
+    }
+
+    /* Read upcase table data */
+    sector = emp->boot.cluster_heap_offset +
+             ((emp->upcase_cluster - 2) << emp->boot.sectors_per_cluster_shift);
+
+    error = bread(emp->devvp, sector, upcase_size, NOCRED, &bp);
+    if (error) {
+        free(emp->upcase, M_EXFAT);
+        emp->upcase = NULL;
+        brelse(bp);
+        return error;
+    }
+
+    /* Copy upcase table data */
+    memcpy(emp->upcase, bp->b_data, upcase_size);
+    brelse(bp);
+
+    if (bootverbose)
+        printf("exfat: upcase table initialized (%ju bytes)\n", 
+               (uintmax_t)upcase_size);
+
+    return 0;
 } 
