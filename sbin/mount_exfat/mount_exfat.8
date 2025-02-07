@@ -1,0 +1,43 @@
+.\" Copyright (c) 2023
+.Dd December 1, 2023
+.Dt MOUNT_EXFAT 8
+.Os
+.Sh NAME
+.Nm mount_exfat
+.Nd mount an exFAT file system
+.Sh SYNOPSIS
+.Nm
+.Op Fl o Ar options
+.Ar special node
+.Sh DESCRIPTION
+The
+.Nm
+command attaches the exFAT file system residing on the special device
+to the global file system namespace at the location indicated by
+.Ar node .
+.Pp
+The options are as follows:
+.Bl -tag -width indent
+.It Fl o Ar options
+Options passed to mount(8):
+.Bl -tag -width indent
+.It Cm ro
+Mount file system read-only.
+.It Cm rw
+Mount file system read-write.
+.El
+.El
+.Sh EXIT STATUS
+.Ex -std
+.Sh EXAMPLES
+Mount an exFAT filesystem:
+.Pp
+.Dl "mount_exfat /dev/da0 /mnt"
+.Sh SEE ALSO
+.Xr mount 8 ,
+.Xr newfs_exfat 8 ,
+.Xr fsck_exfat 8
+.Sh HISTORY
+The
+.Nm
+command first appeared in FreeBSD 14.0. 

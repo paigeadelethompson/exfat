@@ -30,9 +30,23 @@
 #include <string.h>
 #include <sysexits.h>
 #include <unistd.h>
+#include <libutil.h>
 
 #include "mount_exfat.h"
 #include "mntopts.h"
+
+const struct mntopt mopts[] = {
+    { "std",        0, MOPT_STDOPTS },
+    { "update",     0, MOPT_UPDATE },
+    { "force",      0, MOPT_FORCE },
+    { "ro",         0, MOPT_RO },
+    { "rw",         0, MOPT_RW },
+    { "noatime",    0, MOPT_NOATIME },
+    { "sync",       0, MOPT_SYNC },
+    { "async",      0, MOPT_ASYNC },
+    { "loop",       0, MOPT_LOOP },
+    { NULL,         0, 0 }
+};
 
 /* Parse option value from options string (e.g. "uid=1000" returns "1000") */
 static const char *
@@ -54,20 +68,6 @@ get_option_value(const char *option, const char *options)
     }
     return NULL;
 }
-
-static struct mntopt mopts[] = {
-    MOPT_STDOPTS,
-    MOPT_FORCE,
-    MOPT_SYNC,
-    MOPT_UPDATE,
-    MOPT_NOATIME,
-    { "uid", 0, EXFAT_MNT_UID, 0 },
-    { "gid", 0, EXFAT_MNT_GID, 0 },
-    { "mask", 0, EXFAT_MNT_MASK, 0 },
-    { "dmask", 0, EXFAT_MNT_DMASK, 0 },
-    { "fmask", 0, EXFAT_MNT_FMASK, 0 },
-    { NULL, 0, 0, 0 }
-};
 
 static void
 usage(void)

@@ -1,0 +1,39 @@
+.\" Copyright (c) 2023
+.Dd December 1, 2023
+.Dt DEFRAG_EXFAT 8
+.Os
+.Sh NAME
+.Nm defrag_exfat
+.Nd defragment an exFAT file system
+.Sh SYNOPSIS
+.Nm
+.Op Fl fnv
+.Ar special
+.Sh DESCRIPTION
+The
+.Nm
+utility reduces fragmentation on an exFAT file system by reorganizing file data.
+.Pp
+The options are as follows:
+.Bl -tag -width indent
+.It Fl f
+Force defragmentation without confirmation.
+.It Fl n
+Show what would be done without actually defragmenting.
+.It Fl v
+Increase verbosity. Can be specified multiple times.
+.El
+.Sh EXIT STATUS
+.Ex -std
+.Sh EXAMPLES
+Defragment an exFAT filesystem:
+.Pp
+.Dl "defrag_exfat /dev/da0"
+.Sh SEE ALSO
+.Xr fsck_exfat 8 ,
+.Xr mount_exfat 8 ,
+.Xr newfs_exfat 8
+.Sh HISTORY
+The
+.Nm
+command first appeared in FreeBSD 14.0. 
