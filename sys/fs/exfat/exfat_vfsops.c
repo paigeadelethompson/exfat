@@ -221,6 +221,9 @@ exfat_mount(struct mount *mp)
         return error;
     }
 
+    /* Set the mounted device in mount structure */
+    vfs_mountedfrom(mp, from);
+
     VOP_UNLOCK(devvp);
     emp->devvp = devvp;
     emp->mp = mp;
