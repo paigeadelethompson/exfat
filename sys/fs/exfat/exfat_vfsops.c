@@ -65,9 +65,9 @@ static struct vfsops exfat_vfsops = {
 MALLOC_DEFINE(M_EXFAT, "exfat", "EXFAT filesystem");
 
 /* Mount options */
-static const struct vfsopt exfat_opts[] = {
-    { "from", 1, VFSPROP_STRING },
-    { NULL, 0, 0 }
+static const char *exfat_opts[] = {
+    "from",
+    NULL
 };
 
 /* Add these helper functions before exfat_mount(): */
