@@ -141,71 +141,84 @@ MTX_SYSINIT(exfat_mount_lock, &exfat_mount_lock, "exfat_mount", MTX_DEF);
 static int
 exfat_mount(struct mount *mp)
 {
-    if (bootverbose)
-        printf("exfat: mounting %s\n", mp->mnt_stat.f_mntfromname);
-
-    struct vnode *devvp = NULL;
-    struct exfat_mount *emp;
-    struct buf *bp = NULL;
+    struct vnode *devvp;
+    struct exfat_mount *emp = NULL;
+    struct nameidata nd;
+    char *from;
     int error;
 
-    if (vfs_flagopt(mp->mnt_optnew, "update", NULL, 0)) {
-        if (bootverbose)
-            printf("exfat: updating existing mount\n");
-        /* Update mount - get existing mount info */
-        emp = VFSTOEXFAT(mp);
-        devvp = emp->devvp;
-    } else {
-        if (bootverbose)
-            printf("exfat: new mount\n");
-        /* New mount */
-        char *from;
-        error = 0;
-        from = vfs_getopts(mp->mnt_optnew, "from", &error);
-        if (error) {
-            if (bootverbose)
-                printf("exfat: failed to get device path: %d\n", error);
-            return error;
-        }
-        
-        /* Get the device vnode */
-        struct nameidata nd;
-        NDINIT(&nd, LOOKUP, FOLLOW, UIO_SYSSPACE, from);
-        error = namei(&nd);
-        if (error) {
-            if (bootverbose)
-                printf("exfat: failed to lookup device path: %d\n", error);
-            return error;
-        }
-        devvp = nd.ni_vp;
-        NDFREE_PNBUF(&nd);
+    if (bootverbose)
+        printf("exfat: mounting\n");
 
-        struct g_provider *pp;
-        pp = g_dev_getprovider(devvp->v_rdev);
-        if (pp == NULL) {
-            if (bootverbose)
-                printf("exfat: failed to get device provider\n");
-            vrele(devvp);
-            return ENODEV;
-        }
+    if (vfs_filteropt(mp->mnt_optnew, exfat_opts))
+        return (EINVAL);
 
-        /* Set the mounted device in mount structure */
-        vfs_mountedfrom(mp, from);
+    if (mp->mnt_flag & MNT_UPDATE) {
+        if (bootverbose)
+            printf("exfat: update mount\n");
+        return (EOPNOTSUPP);  /* Not yet supported */
     }
+
+    /* Allocate mount structure */
+    emp = malloc(sizeof(struct exfat_mount), M_EXFAT, M_WAITOK | M_ZERO);
+    if (emp == NULL)
+        return (ENOMEM);
+
+    /* Get device path */
+    from = vfs_getopts(mp->mnt_optnew, "from", &error);
+    if (error) {
+        if (bootverbose)
+            printf("exfat: failed to get device path\n");
+        free(emp, M_EXFAT);
+        return error;
+    }
+
+    /* Initialize the namei data to lookup the device */
+    NDINIT(&nd, LOOKUP, FOLLOW | LOCKLEAF, UIO_SYSSPACE, from, curthread);
+    error = namei(&nd);
+    if (error) {
+        if (bootverbose)
+            printf("exfat: failed to lookup device: %d\n", error);
+        free(emp, M_EXFAT);
+        return error;
+    }
+    devvp = nd.ni_vp;
+    NDFREE(&nd, NDF_ONLY_PNBUF);
 
     /* Check if it's a block device */
     if (devvp->v_type != VBLK) {
         if (bootverbose)
             printf("exfat: not a block device\n");
-        vrele(devvp);
+        vput(devvp);
+        free(emp, M_EXFAT);
         return ENOTBLK;
     }
 
-    /* Allocate mount structure */
-    emp = malloc(sizeof(struct exfat_mount), M_EXFAT, M_WAITOK | M_ZERO);
-    mp->mnt_data = emp;
-    emp->mp = mp;
+    /* Get the device vnode */
+    error = vfs_mountedon(devvp);
+    if (error) {
+        if (bootverbose)
+            printf("exfat: device already mounted\n");
+        vput(devvp);
+        free(emp, M_EXFAT);
+        return error;
+    }
+
+    /* Open the device */
+    error = VOP_OPEN(devvp, FREAD | (mp->mnt_flag & MNT_RDONLY ? 0 : FWRITE),
+                     FSCRED, curthread);
+    if (error) {
+        if (bootverbose)
+            printf("exfat: failed to open device: %d\n", error);
+        vput(devvp);
+        free(emp, M_EXFAT);
+        return error;
+    }
+
+    VOP_UNLOCK(devvp);
     emp->devvp = devvp;
+    emp->mp = mp;
+    mp->mnt_data = emp;
 
     /* Initialize error tracking */
     emp->error_count = 0;
