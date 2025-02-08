@@ -64,6 +64,12 @@ static struct vfsops exfat_vfsops = {
 /* After the mount structure definition, add: */
 MALLOC_DEFINE(M_EXFAT, "exfat", "EXFAT filesystem");
 
+/* Mount options */
+static const struct vfsoptdecl exfat_opts[] = {
+    { "from", VFSTOPT_STRING, 1 },
+    { NULL, 0, 0 }
+};
+
 /* Add these helper functions before exfat_mount(): */
 
 /*
@@ -145,6 +151,7 @@ exfat_mount(struct mount *mp)
     struct exfat_mount *emp = NULL;
     struct nameidata nd;
     char *from;
+    struct buf *bp = NULL;
     int error;
 
     if (bootverbose)
@@ -174,7 +181,7 @@ exfat_mount(struct mount *mp)
     }
 
     /* Initialize the namei data to lookup the device */
-    NDINIT(&nd, LOOKUP, FOLLOW | LOCKLEAF, UIO_SYSSPACE, from, curthread);
+    NDINIT(&nd, LOOKUP, FOLLOW | LOCKLEAF, UIO_SYSSPACE, from);
     error = namei(&nd);
     if (error) {
         if (bootverbose)
@@ -183,7 +190,7 @@ exfat_mount(struct mount *mp)
         return error;
     }
     devvp = nd.ni_vp;
-    NDFREE(&nd, NDF_ONLY_PNBUF);
+    NDFREE_PNBUF(&nd);
 
     /* Check if it's a block device */
     if (devvp->v_type != VBLK) {
@@ -194,19 +201,18 @@ exfat_mount(struct mount *mp)
         return ENOTBLK;
     }
 
-    /* Get the device vnode */
-    error = vfs_mountedon(devvp);
-    if (error) {
+    /* Check if device is already mounted */
+    if (devvp->v_rdev->si_mountpt != NULL) {
         if (bootverbose)
             printf("exfat: device already mounted\n");
         vput(devvp);
         free(emp, M_EXFAT);
-        return error;
+        return EBUSY;
     }
 
     /* Open the device */
     error = VOP_OPEN(devvp, FREAD | (mp->mnt_flag & MNT_RDONLY ? 0 : FWRITE),
-                     FSCRED, curthread);
+                     FSCRED, curthread, NULL);
     if (error) {
         if (bootverbose)
             printf("exfat: failed to open device: %d\n", error);
