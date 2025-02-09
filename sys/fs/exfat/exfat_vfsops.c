@@ -237,6 +237,18 @@ exfat_mount(struct mount *mp)
     emp->mp = mp;
     mp->mnt_data = emp;
 
+    /* Set device block size */
+    vn_lock(devvp, LK_EXCLUSIVE | LK_RETRY);
+    error = vinvalbuf(devvp, V_SAVE, 0, 0);
+    if (error) {
+        if (bootverbose)
+            printf("exfat: vinvalbuf failed: %d\n", error);
+        VOP_UNLOCK(devvp);
+        return error;
+    }
+    devvp->v_bufobj.bo_bsize = EXFAT_SECTOR_SIZE;
+    VOP_UNLOCK(devvp);
+
     /* Initialize error tracking */
     emp->error_count = 0;
     vfs_timestamp(&emp->last_error_time);
