@@ -219,6 +219,13 @@ exfat_mount(struct mount *mp)
         printf("  cluster_heap_offset: %u\n", le32toh(bs->cluster_heap_offset));
         printf("  cluster_count: %u\n", le32toh(bs->cluster_count));
         printf("  root_dir_cluster: %u\n", le32toh(bs->root_dir_cluster));
+        /* Dump raw bytes around sectors_per_cluster_shift */
+        uint8_t *raw = bp->b_data;
+        printf("  raw bytes at offset 0x6C-0x73:");
+        for (int i = 0x6C; i <= 0x73; i++) {
+            printf(" %02x", raw[i]);
+        }
+        printf("\n");
         printf("  sectors_per_cluster_shift: %u\n", bs->sectors_per_cluster_shift);
     }
 
