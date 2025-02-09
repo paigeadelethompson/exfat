@@ -184,16 +184,32 @@ exfat_mount(struct mount *mp)
     /* Initialize the namei data to lookup the device */
     NDINIT(&nd, LOOKUP, FOLLOW | LOCKLEAF, UIO_SYSSPACE, from);
     error = namei(&nd);
-    if (error) {
-        if (bootverbose)
-            printf("exfat: failed to lookup device: %d\n", error);
-        free(emp, M_EXFAT);
+    if (error)
         return error;
-    }
+
     devvp = nd.ni_vp;
     NDFREE_PNBUF(&nd);
 
-    /* Check if it's a block device */
+    /* Get a new vnode for the device */
+    devvp = mntfs_allocvp(mp, devvp);
+    struct cdev *dev = devvp->v_rdev;
+    if (atomic_cmpset_acq_ptr((uintptr_t *)&dev->si_mountpt, 0, (uintptr_t)mp) == 0) {
+        mntfs_freevp(devvp);
+        return (EBUSY);
+    }
+
+    /* Open the device through GEOM */
+    g_topology_lock();
+    error = g_vfs_open(devvp, &cp, "exfat", ronly ? 0 : 1);
+    g_topology_unlock();
+    if (error != 0) {
+        atomic_store_rel_ptr((uintptr_t *)&dev->si_mountpt, 0);
+        mntfs_freevp(devvp);
+        return (error);
+    }
+    dev_ref(dev);
+
+    /* Check if device is already mounted */
     if (devvp->v_type != VBLK && devvp->v_type != VREG && devvp->v_type != VCHR) {
         if (bootverbose)
             printf("exfat: not a block device, character device, or regular file (type=%d)\n", devvp->v_type);
@@ -210,17 +226,6 @@ exfat_mount(struct mount *mp)
         vput(devvp);
         free(emp, M_EXFAT);
         return EBUSY;
-    }
-
-    /* Open the device */
-    error = VOP_OPEN(devvp, FREAD | (mp->mnt_flag & MNT_RDONLY ? 0 : FWRITE),
-                     FSCRED, curthread, NULL);
-    if (error) {
-        if (bootverbose)
-            printf("exfat: failed to open device: %d\n", error);
-        vput(devvp);
-        free(emp, M_EXFAT);
-        return error;
     }
 
     /* Set up buffer I/O strategy */
