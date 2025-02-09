@@ -64,7 +64,6 @@ struct exfat_boot_record {
     uint32_t volume_serial;        /* Volume serial number */
     uint16_t fs_revision;          /* Filesystem revision */
     uint16_t volume_flags;         /* Volume flags */
-    uint8_t  volume_state;      /* Clean/dirty state */
     uint8_t  bytes_per_sector_shift;  /* Bytes per sector (as power of 2) */
     uint8_t  sectors_per_cluster_shift; /* Sectors per cluster (as power of 2) */
     uint8_t  number_of_fats;       /* Number of FATs */
