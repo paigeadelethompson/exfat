@@ -229,23 +229,64 @@ int
 write_bitmap(struct mkfs_exfat_ctx *ctx)
 {
     uint8_t *bitmap;
-    size_t bytes_per_cluster = ctx->sectors_per_cluster * EXFAT_SECTOR_SIZE;
+    uint32_t sector;
+    size_t bitmap_size;
     int error;
 
-    /* Allocate and clear bitmap buffer */
-    bitmap = calloc(1, bytes_per_cluster);
-    if (!bitmap) {
-        warn("Failed to allocate bitmap buffer");
-        return -1;
+    /* Calculate bitmap size */
+    bitmap_size = (ctx->cluster_count + 7) / 8;  // Round up to bytes
+    bitmap_size = roundup2(bitmap_size, EXFAT_SECTOR_SIZE);  // Round up to sector
+
+    report_progress(ctx, DEBUG_DETAIL, "Writing bitmap:");
+    report_progress(ctx, DEBUG_DETAIL, "  Bitmap size: %zu bytes", bitmap_size);
+    report_progress(ctx, DEBUG_DETAIL, "  Total clusters: %u", ctx->cluster_count);
+    report_progress(ctx, DEBUG_DETAIL, "  Sectors per cluster: %u", ctx->sectors_per_cluster);
+
+    /* Allocate bitmap buffer */
+    bitmap = calloc(1, bitmap_size);
+    if (bitmap == NULL)
+        return ENOMEM;
+
+    /* Mark clusters 2-6 as allocated (system area) */
+    for (uint32_t i = 0; i < 5; i++) {
+        bitmap[i >> 3] |= 1 << (i & 7);
+        report_progress(ctx, DEBUG_DETAIL, "  Marking system cluster %u", i + 2);
     }
 
-    /* Write bitmap cluster */
-    error = write_cluster(ctx, ctx->bitmap_cluster, bitmap);
+    /* Mark bitmap cluster itself */
+    uint32_t bitmap_idx = ctx->bitmap_cluster - 2;  // Convert to 0-based index
+    bitmap[bitmap_idx >> 3] |= 1 << (bitmap_idx & 7);
+    report_progress(ctx, DEBUG_DETAIL, "  Marking bitmap cluster %u (idx %u)", 
+                   ctx->bitmap_cluster, bitmap_idx);
+
+    /* Mark upcase table clusters */
+    for (uint32_t i = 0; i < ctx->upcase_clusters; i++) {
+        uint32_t cluster_idx = (ctx->upcase_cluster + i) - 2;
+        bitmap[cluster_idx >> 3] |= 1 << (cluster_idx & 7);
+        report_progress(ctx, DEBUG_DETAIL, "  Marking upcase cluster %u (idx %u)", 
+                       ctx->upcase_cluster + i, cluster_idx);
+    }
+
+    /* Mark root directory cluster */
+    uint32_t root_idx = ctx->root_cluster - 2;
+    bitmap[root_idx >> 3] |= 1 << (root_idx & 7);
+    report_progress(ctx, DEBUG_DETAIL, "  Marking root cluster %u (idx %u)", 
+                   ctx->root_cluster, root_idx);
+
+    /* Write bitmap to disk */
+    sector = ctx->cluster_heap_offset + 
+             ((ctx->bitmap_cluster - 2) * ctx->sectors_per_cluster);
+    report_progress(ctx, DEBUG_DETAIL, "  Writing bitmap at sector %u", sector);
+
+    /* Write bitmap one sector at a time */
+    for (size_t i = 0; i < bitmap_size / EXFAT_SECTOR_SIZE; i++) {
+        error = write_sector(ctx, sector + i, 
+                           (uint8_t *)bitmap + (i * EXFAT_SECTOR_SIZE));
+        if (error)
+            break;
+    }
 
     free(bitmap);
-    if (error == 0) {
-        report_progress(ctx, DEBUG_BASIC, "Bitmap written successfully");
-    }
     return error;
 }
 
@@ -501,14 +542,20 @@ init_filesystem(struct mkfs_exfat_ctx *ctx)
     ctx->sectors_per_cluster = 64;
 
     /* Calculate required clusters for upcase table */
-    size_t upcase_size = EXFAT_UPCASE_SIZE * sizeof(uint16_t);  /* 128KB */
     size_t bytes_per_cluster = ctx->sectors_per_cluster * EXFAT_SECTOR_SIZE;
-    size_t upcase_clusters = (upcase_size + bytes_per_cluster - 1) / bytes_per_cluster;
+    ctx->upcase_clusters = (EXFAT_UPCASE_SIZE * sizeof(uint16_t) + bytes_per_cluster - 1) 
+                          / bytes_per_cluster;
+
+    /* Calculate bitmap size in sectors */
+    ctx->bitmap_sectors = (ctx->cluster_count + 7) / 8;
+    if (ctx->bitmap_sectors % EXFAT_SECTOR_SIZE)
+        ctx->bitmap_sectors = (ctx->bitmap_sectors + EXFAT_SECTOR_SIZE - 1) 
+                             & ~(EXFAT_SECTOR_SIZE - 1);
 
     /* Assign special clusters */
     ctx->bitmap_cluster = 2;                    /* First cluster of bitmap */
     ctx->upcase_cluster = 3;                    /* First cluster of upcase table */
-    ctx->root_cluster = 3 + upcase_clusters;    /* First cluster after upcase table */
+    ctx->root_cluster = 3 + ctx->upcase_clusters;    /* First cluster after upcase table */
 
     /* Validate cluster numbers */
     if (ctx->bitmap_cluster < 2 || ctx->bitmap_cluster >= ctx->cluster_count + 2) {
@@ -516,7 +563,7 @@ init_filesystem(struct mkfs_exfat_ctx *ctx)
         return -1;
     }
 
-    if (ctx->upcase_cluster < 2 || ctx->upcase_cluster + upcase_clusters > ctx->cluster_count + 2) {
+    if (ctx->upcase_cluster < 2 || ctx->upcase_cluster + ctx->upcase_clusters > ctx->cluster_count + 2) {
         warnx("Invalid upcase table cluster range");
         return -1;
     }
@@ -532,7 +579,7 @@ init_filesystem(struct mkfs_exfat_ctx *ctx)
     report_progress(ctx, DEBUG_DETAIL, "  Cluster heap offset: %u sectors", ctx->cluster_heap_offset);
     report_progress(ctx, DEBUG_DETAIL, "  Cluster count: %u", ctx->cluster_count);
     report_progress(ctx, DEBUG_DETAIL, "  Upcase table size: %zu bytes (%zu clusters)", 
-                   upcase_size, upcase_clusters);
+                   EXFAT_UPCASE_SIZE, ctx->upcase_clusters);
 
     return 0;
 }

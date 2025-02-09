@@ -133,6 +133,8 @@ struct mkfs_exfat_ctx {
     uint32_t upcase_cluster;     /* First cluster of upcase table */
     uint32_t volume_serial;      /* Volume serial number */
     uint32_t upcase_checksum;    /* Checksum of upcase table */
+    uint32_t upcase_clusters;    /* Number of clusters for upcase table */
+    uint32_t bitmap_sectors;     /* Size of bitmap in sectors */
 };
 
 /* Directory entry structures */
