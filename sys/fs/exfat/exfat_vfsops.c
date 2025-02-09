@@ -394,8 +394,6 @@ exfat_root(struct mount *mp, int flags, struct vnode **vpp)
 static int
 exfat_statfs(struct mount *mp, struct statfs *sbp)
 {
-    if (bootverbose)
-        printf("exfat: getting filesystem statistics\n");
     struct exfat_mount *emp;
 
     emp = VFSTOEXFAT(mp);
@@ -403,13 +401,9 @@ exfat_statfs(struct mount *mp, struct statfs *sbp)
     sbp->f_bsize = emp->bytes_per_cluster;
     sbp->f_iosize = emp->bytes_per_cluster;
     sbp->f_blocks = emp->boot.cluster_count;
-    sbp->f_bfree = emp->free_clusters;   /* Use cached value */
+    sbp->f_bfree = emp->free_clusters;
     sbp->f_bavail = emp->free_clusters;
-    /* Set maximum filename length */
     sbp->f_namemax = 255;
-
-    /* Copy volume label */
-    strlcpy(sbp->f_mntfromname, emp->volume_label, sizeof(sbp->f_mntfromname));
 
     return 0;
 }
