@@ -192,12 +192,25 @@ exfat_init_bitmap(struct exfat_mount *emp)
         return error;
     }
 
+    /* Dump first 64 bytes of sector */
+    if (bootverbose) {
+        printf("exfat: root directory contents:\n");
+        for (int i = 0; i < 64; i++) {
+            printf("%02x ", ((uint8_t *)bp->b_data)[i]);
+            if ((i + 1) % 16 == 0)
+                printf("\n");
+        }
+    }
+
     /* Look for bitmap entry */
     entry = (struct exfat_entry_bitmap *)bp->b_data;
     if (bootverbose)
         printf("exfat: scanning for bitmap entry, first entry type=0x%02x\n", entry->type);
 
     while (entry->type != EXFAT_ENTRY_BITMAP && entry->type != EXFAT_ENTRY_EOD) {
+        if (bootverbose)
+            printf("exfat: checking entry at offset %td, type=0x%02x\n",
+                   (uint8_t *)entry - (uint8_t *)bp->b_data, entry->type);
         entry++;
         if ((uint8_t *)entry >= (uint8_t *)bp->b_data + EXFAT_SECTOR_SIZE) {
             if (bootverbose)
