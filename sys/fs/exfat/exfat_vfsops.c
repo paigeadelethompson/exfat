@@ -226,9 +226,20 @@ exfat_mount(struct mount *mp)
     /* Set up buffer I/O strategy */
     if (devvp->v_type == VCHR) {
         struct cdev *dev = devvp->v_rdev;
+        struct g_consumer *cp;
+        struct g_provider *pp;
+
+        /* Get the GEOM provider */
+        pp = g_dev_getprovider(dev);
+        if (pp == NULL) {
+            if (bootverbose)
+                printf("exfat: failed to get provider for device\n");
+            return ENXIO;
+        }
+
         dev_ref(dev);
-        devvp->v_bufobj.bo_ops = &gb_bufops;
-        devvp->v_bufobj.bo_private = dev;
+        devvp->v_bufobj.bo_ops = pp->geom->vfs_bp_ops;
+        devvp->v_bufobj.bo_private = pp;
         devvp->v_bufobj.bo_bsize = EXFAT_SECTOR_SIZE;
     }
 
