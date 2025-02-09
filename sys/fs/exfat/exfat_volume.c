@@ -170,12 +170,19 @@ exfat_init_bitmap(struct exfat_mount *emp)
     if (bootverbose)
         printf("exfat: initializing bitmap, root_cluster=%u\n", emp->root_cluster);
 
+    if (bootverbose)
+        printf("exfat: cluster_heap_offset=%u, sectors_per_cluster=%u\n",
+               emp->boot.cluster_heap_offset,
+               1 << emp->boot.sectors_per_cluster_shift);
+
     /* Read first sector of root directory */
     sector = emp->boot.cluster_heap_offset +
              ((emp->root_cluster - 2) << emp->boot.sectors_per_cluster_shift);
 
     if (bootverbose)
-        printf("exfat: reading root directory at sector %u\n", sector);
+        printf("exfat: reading root directory at sector %u (calc: %u + ((%u - 2) << %u))\n",
+               sector, emp->boot.cluster_heap_offset, emp->root_cluster,
+               emp->boot.sectors_per_cluster_shift);
 
     error = bread(emp->devvp, sector, EXFAT_SECTOR_SIZE, NOCRED, &bp);
     if (error) {
