@@ -167,30 +167,51 @@ exfat_init_bitmap(struct exfat_mount *emp)
     uint32_t sector;
     int error;
 
+    if (bootverbose)
+        printf("exfat: initializing bitmap, root_cluster=%u\n", emp->root_cluster);
+
     /* Read first sector of root directory */
     sector = emp->boot.cluster_heap_offset +
              ((emp->root_cluster - 2) << emp->boot.sectors_per_cluster_shift);
 
+    if (bootverbose)
+        printf("exfat: reading root directory at sector %u\n", sector);
+
     error = bread(emp->devvp, sector, EXFAT_SECTOR_SIZE, NOCRED, &bp);
     if (error) {
+        if (bootverbose)
+            printf("exfat: failed to read root directory sector: %d\n", error);
         brelse(bp);
         return error;
     }
 
     /* Look for bitmap entry */
     entry = (struct exfat_entry_bitmap *)bp->b_data;
+    if (bootverbose)
+        printf("exfat: scanning for bitmap entry, first entry type=0x%02x\n", entry->type);
+
     while (entry->type != EXFAT_ENTRY_BITMAP && entry->type != EXFAT_ENTRY_EOD) {
         entry++;
         if ((uint8_t *)entry >= (uint8_t *)bp->b_data + EXFAT_SECTOR_SIZE) {
+            if (bootverbose)
+                printf("exfat: reached end of sector without finding bitmap\n");
             brelse(bp);
             return ENOENT;
         }
+        if (bootverbose)
+            printf("exfat: entry type=0x%02x\n", entry->type);
     }
 
     if (entry->type == EXFAT_ENTRY_EOD) {
+        if (bootverbose)
+            printf("exfat: found end of directory without bitmap\n");
         brelse(bp);
         return ENOENT;
     }
+
+    if (bootverbose)
+        printf("exfat: found bitmap entry, first_cluster=%u, size=%lu\n",
+               le32toh(entry->first_cluster), (unsigned long)le64toh(entry->data_length));
 
     /* Store bitmap information in mount structure */
     emp->bitmap_cluster = le32toh(entry->first_cluster);
