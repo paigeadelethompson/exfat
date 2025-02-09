@@ -257,8 +257,8 @@ static const uint8_t exfat_invalid_chars[] = {
 };
 
 /* Volume flags */
-#define EXFAT_VOL_DIRTY        0x0001  /* Volume is dirty */
-#define EXFAT_VOL_ACTIVE_FAT   0x0002  /* Second FAT is active */
+#define EXFAT_VOL_DIRTY    0x0001    /* Volume is dirty */
+#define EXFAT_VOL_ACTIVE_FAT 0x0002  /* Active FAT */
 
 /* Volume state values */
 #define EXFAT_STATE_CLEAN     0x00

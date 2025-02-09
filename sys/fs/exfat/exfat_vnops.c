@@ -1110,12 +1110,13 @@ exfat_handle_error(struct exfat_mount *emp, struct vnode *vp, int error, int fla
     if (bootverbose)
         printf("exfat: handling error %d with flags 0x%x\n", error, flags);
 
-    /* Check if filesystem is marked dirty */
-    if (emp->boot.volume_state != EXFAT_STATE_DIRTY) {
-        /* Mark volume as dirty for recovery */
-        int err = exfat_set_volume_dirty(emp, 1);
-        if (err && bootverbose)
-            printf("exfat: failed to mark volume dirty: %d\n", err);
+    /* Check if volume is already marked dirty */
+    if (!(emp->boot.volume_flags & EXFAT_VOL_DIRTY)) {
+        /* Mark volume as dirty */
+        emp->boot.volume_flags |= EXFAT_VOL_DIRTY;
+        
+        /* Write boot sector */
+        error = bread(emp->devvp, 0, EXFAT_SECTOR_SIZE, NOCRED, &bp);
     }
 
     if (flags & EXFAT_EH_CLUSTER) {
