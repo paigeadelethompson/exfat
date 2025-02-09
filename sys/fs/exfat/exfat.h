@@ -181,13 +181,11 @@ struct exfat_direntry_set {
     uint8_t name_count;
 };
 
-/* Directory scanning context */
+/* Directory scan context */
 struct exfat_scan_ctx {
-    struct exfat_mount *emp;
-    uint32_t cluster;           /* Current cluster */
-    uint32_t offset;           /* Offset within cluster */
-    struct buf *bp;            /* Current buffer */
-    uint8_t *entry;            /* Current entry pointer */
+    struct buf *bp;        /* Current buffer */
+    size_t offset;         /* Current offset in buffer */
+    struct exfat_mount *emp;  /* Mount structure */
 };
 
 /* In-memory file info structure */
@@ -357,9 +355,6 @@ void exfat_time_to_unix(uint32_t date, uint32_t time, struct timespec *ts);
 int exfat_handle_error(struct exfat_mount *emp, struct vnode *vp, int error, int flags);
 int exfat_extend_file(struct vnode *vp, off_t new_size);
 int exfat_init_directory(struct exfat_mount *emp, uint32_t cluster);
-int exfat_mount(struct mount *mp);
-int exfat_unmount(struct mount *mp, int mntflags);
-int exfat_root(struct mount *mp, int flags, struct vnode **vpp);
 void exfat_cleanup_bitmap(struct exfat_mount *emp);
 int exfat_read_rootdir(struct exfat_mount *emp);
 
