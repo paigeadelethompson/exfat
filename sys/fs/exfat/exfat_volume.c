@@ -1089,23 +1089,24 @@ exfat_read_rootdir(struct exfat_mount *emp)
         return error;
     }
 
+    /* Initialize scan context */
+    ctx.emp = emp;
+    ctx.cluster = emp->root_cluster;
+    ctx.offset = 0;
+    ctx.bp = bp;
+    ctx.entry = (uint8_t *)bp->b_data;
+
     /* Dump first 32 bytes of root directory */
     if (bootverbose) {
-        uint8_t *data = (uint8_t *)bp->b_data;
         printf("exfat: first directory entry:\n");
-        printf("  type: 0x%02x\n", data[0]);
+        printf("  type: 0x%02x\n", ctx.entry[0]);
         printf("  data:");
         for (int i = 0; i < 32; i++) {
             if (i % 16 == 0) printf("\n   ");
-            printf(" %02x", data[i]);
+            printf(" %02x", ctx.entry[i]);
         }
         printf("\n");
     }
-
-    /* Initialize scan context */
-    ctx.bp = bp;
-    ctx.offset = 0;
-    ctx.emp = emp;
 
     /* Scan for bitmap entry */
     error = exfat_scan_directory(emp->devvp, &ctx);

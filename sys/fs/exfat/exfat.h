@@ -183,9 +183,11 @@ struct exfat_direntry_set {
 
 /* Directory scan context */
 struct exfat_scan_ctx {
-    struct buf *bp;        /* Current buffer */
-    size_t offset;         /* Current offset in buffer */
-    struct exfat_mount *emp;  /* Mount structure */
+    struct exfat_mount *emp;    /* Mount structure */
+    uint32_t cluster;           /* Current cluster */
+    uint32_t offset;            /* Offset within cluster */
+    struct buf *bp;             /* Current buffer */
+    uint8_t *entry;             /* Current entry pointer */
 };
 
 /* In-memory file info structure */
