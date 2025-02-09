@@ -154,6 +154,8 @@ exfat_mount(struct mount *mp)
     char *from;
     struct buf *bp = NULL;
     int error;
+    struct g_consumer *cp;
+    int ronly = (mp->mnt_flag & MNT_RDONLY) != 0;
 
     if (bootverbose)
         printf("exfat: mounting\n");
@@ -193,6 +195,7 @@ exfat_mount(struct mount *mp)
     /* Get a new vnode for the device */
     devvp = mntfs_allocvp(mp, devvp);
     struct cdev *dev = devvp->v_rdev;
+
     if (atomic_cmpset_acq_ptr((uintptr_t *)&dev->si_mountpt, 0, (uintptr_t)mp) == 0) {
         mntfs_freevp(devvp);
         return (EBUSY);
@@ -231,7 +234,6 @@ exfat_mount(struct mount *mp)
     /* Set up buffer I/O strategy */
     if (devvp->v_type == VCHR) {
         struct cdev *dev = devvp->v_rdev;
-        struct g_consumer *cp;
         struct g_provider *pp;
 
         /* Get the GEOM provider */
