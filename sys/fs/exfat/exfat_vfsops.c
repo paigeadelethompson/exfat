@@ -190,6 +190,22 @@ exfat_mount(struct mount *mp)
 
     /* Copy and verify boot sector */
     memcpy(&emp->boot, bp->b_data, sizeof(struct exfat_boot_record));
+    if (bootverbose) {
+        struct exfat_boot_record *bs = (struct exfat_boot_record *)bp->b_data;
+        printf("exfat: boot sector raw values:\n");
+        printf("  jump_boot: %02x %02x %02x\n", 
+               bs->jump_boot[0], bs->jump_boot[1], bs->jump_boot[2]);
+        printf("  fs_name: %.8s\n", bs->fs_name);
+        printf("  partition_offset: %u\n", le64toh(bs->partition_offset));
+        printf("  volume_length: %u\n", le64toh(bs->volume_length));
+        printf("  fat_offset: %u\n", le32toh(bs->fat_offset));
+        printf("  fat_length: %u\n", le32toh(bs->fat_length));
+        printf("  cluster_heap_offset: %u\n", le32toh(bs->cluster_heap_offset));
+        printf("  cluster_count: %u\n", le32toh(bs->cluster_count));
+        printf("  root_dir_cluster: %u\n", le32toh(bs->root_dir_cluster));
+        printf("  sectors_per_cluster_shift: %u\n", bs->sectors_per_cluster_shift);
+    }
+
     brelse(bp);
 
     if (memcmp(emp->boot.fs_name, "EXFAT   ", 8) != 0) {
