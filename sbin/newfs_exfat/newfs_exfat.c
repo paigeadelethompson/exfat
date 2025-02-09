@@ -28,6 +28,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <time.h>
 
 #ifdef __APPLE__
 #include <sys/disk.h>
@@ -115,6 +116,22 @@ calculate_boot_checksum(struct mkfs_exfat_ctx *ctx, const void *boot_region, siz
     return checksum;
 }
 
+static uint32_t
+generate_volume_serial(void)
+{
+    struct timespec ts;
+    uint32_t serial;
+
+    /* Get current time */
+    clock_gettime(CLOCK_REALTIME, &ts);
+
+    /* Mix timestamp components to create serial */
+    serial = ((uint32_t)ts.tv_sec & 0xFFFF) << 16;
+    serial |= ((uint32_t)ts.tv_nsec & 0xFFFF);
+
+    return serial;
+}
+
 static int
 write_boot_sector(struct mkfs_exfat_ctx *ctx)
 {
@@ -133,7 +150,7 @@ write_boot_sector(struct mkfs_exfat_ctx *ctx)
     boot->cluster_heap_offset = htole32(ctx->cluster_heap_offset);
     boot->cluster_count = htole32(ctx->cluster_count);
     boot->root_dir_cluster = htole32(ctx->root_cluster);
-    boot->volume_serial = htole32(0x67A30E5A);  /* Random serial */
+    boot->volume_serial = htole32(generate_volume_serial());
     boot->fs_revision = htole16(0x0100);
     boot->bytes_per_sector_shift = 9;  /* 512 bytes */
     boot->sectors_per_cluster_shift = 6;  /* 64 sectors */
@@ -153,7 +170,8 @@ write_boot_sector(struct mkfs_exfat_ctx *ctx)
     checksum = calculate_boot_checksum(ctx, boot_region, 11 * EXFAT_SECTOR_SIZE);
 
     /* Write checksum into boot sector */
-    boot->volume_flags = htole16(checksum & 0xFFFF);
+    /* Set volume flags: clean (bit 0 = 0) and using first FAT (bit 1 = 0) */
+    boot->volume_flags = htole16((checksum & 0xFFFF) & ~0x03);
     *(uint8_t *)(boot_region + 112) = (checksum >> 16) & 0xFF;
 
     /* Fill sector 11 with repeating checksum value */
