@@ -1107,6 +1107,8 @@ exfat_init_directory(struct exfat_mount *emp, uint32_t cluster)
 int
 exfat_handle_error(struct exfat_mount *emp, struct vnode *vp, int error, int flags)
 {
+    struct buf *bp;
+
     if (bootverbose)
         printf("exfat: handling error %d with flags 0x%x\n", error, flags);
 
@@ -1117,6 +1119,19 @@ exfat_handle_error(struct exfat_mount *emp, struct vnode *vp, int error, int fla
         
         /* Write boot sector */
         error = bread(emp->devvp, 0, EXFAT_SECTOR_SIZE, NOCRED, &bp);
+        if (error) {
+            if (bootverbose)
+                printf("exfat: failed to read boot sector: %d\n", error);
+            return error;
+        }
+        
+        /* Update boot sector */
+        memcpy(bp->b_data, &emp->boot, sizeof(struct exfat_boot_record));
+        error = bwrite(bp);
+        brelse(bp);
+        
+        if (error && bootverbose)
+            printf("exfat: failed to write boot sector: %d\n", error);
     }
 
     if (flags & EXFAT_EH_CLUSTER) {
