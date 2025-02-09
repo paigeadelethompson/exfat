@@ -222,6 +222,13 @@ exfat_mount(struct mount *mp)
         return error;
     }
 
+    /* Set up buffer I/O strategy */
+    if (devvp->v_type == VCHR) {
+        devvp->v_bufobj.bo_ops = devvp->v_rdev->si_bufobj.bo_ops;
+        devvp->v_bufobj.bo_private = devvp->v_rdev;
+        devvp->v_bufobj.bo_flag |= BO_STRATEGY;
+    }
+
     /* Set the mounted device in mount structure */
     vfs_mountedfrom(mp, from);
 
