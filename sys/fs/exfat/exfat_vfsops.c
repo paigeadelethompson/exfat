@@ -140,11 +140,9 @@ exfat_mount(struct mount *mp)
 
     /* Get a new vnode for the device */
     devvp = mntfs_allocvp(mp, devvp);
-    vn_lock(devvp, LK_EXCLUSIVE | LK_RETRY);  /* Lock before GEOM operations */
     struct cdev *dev = devvp->v_rdev;
 
     if (atomic_cmpset_acq_ptr((uintptr_t *)&dev->si_mountpt, 0, (uintptr_t)mp) == 0) {
-        VOP_UNLOCK(devvp);
         if (bootverbose)
             printf("exfat: device already mounted\n");
         mntfs_freevp(devvp);
@@ -287,7 +285,9 @@ fail:
         printf("exfat: mount failed\n");
     if (emp) {
         if (emp->devvp) {
-            g_vfs_close(cp);    /* Close GEOM first */
+            g_topology_lock();
+            g_vfs_close(cp);    /* Close GEOM with topology locked */
+            g_topology_unlock();
             atomic_store_rel_ptr((uintptr_t *)&dev->si_mountpt, 0);
             mntfs_freevp(devvp);
         }
