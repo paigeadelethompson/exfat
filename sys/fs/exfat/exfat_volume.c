@@ -537,6 +537,7 @@ exfat_set_volume_dirty(struct exfat_mount *emp, int dirty)
         printf("exfat: marking volume %s\n", dirty ? "dirty" : "clean");
 
     struct buf *bp;
+    struct exfat_boot_record *bs;
     int error;
 
     /* Read boot sector */
@@ -549,10 +550,13 @@ exfat_set_volume_dirty(struct exfat_mount *emp, int dirty)
     }
 
     /* Update volume state */
-    struct exfat_boot_record *bs = (struct exfat_boot_record *)bp->b_data;
-    bs->volume_state = dirty ? EXFAT_STATE_DIRTY : EXFAT_STATE_CLEAN;
+    bs = (struct exfat_boot_record *)bp->b_data;
+    if (dirty)
+        bs->volume_flags |= EXFAT_VOL_DIRTY;
+    else
+        bs->volume_flags &= ~EXFAT_VOL_DIRTY;
 
-    /* Write back boot sector */
+    /* Write back */
     error = bwrite(bp);
     if (error) {
         if (bootverbose)
@@ -564,7 +568,10 @@ exfat_set_volume_dirty(struct exfat_mount *emp, int dirty)
         printf("exfat: volume marked %s successfully\n", 
                dirty ? "dirty" : "clean");
 
-    return 0;
+    /* Update in-memory copy */
+    emp->boot.volume_flags = bs->volume_flags;
+
+    return error;
 }
 
 /*
