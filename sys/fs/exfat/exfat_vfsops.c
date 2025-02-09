@@ -458,27 +458,14 @@ exfat_statfs(struct mount *mp, struct statfs *sbp)
     if (bootverbose)
         printf("exfat: getting filesystem statistics\n");
     struct exfat_mount *emp;
-    uint32_t free_clusters = 0;
-    uint32_t cluster;
 
     emp = VFSTOEXFAT(mp);
-
-    /* Count free clusters */
-    for (cluster = 2; cluster < emp->boot.cluster_count + 2; cluster++) {
-        uint32_t next;
-        if (exfat_read_fat_entry(emp, cluster, &next) == 0 && 
-            next == EXFAT_CLUSTER_FREE)
-            free_clusters++;
-    }
-
-    if (bootverbose)
-        printf("exfat: found %u free clusters\n", free_clusters);
 
     sbp->f_bsize = emp->bytes_per_cluster;
     sbp->f_iosize = emp->bytes_per_cluster;
     sbp->f_blocks = emp->boot.cluster_count;
-    sbp->f_bfree = free_clusters;
-    sbp->f_bavail = free_clusters;
+    sbp->f_bfree = emp->free_clusters;   /* Use cached value */
+    sbp->f_bavail = emp->free_clusters;
     /* Set maximum filename length */
     sbp->f_namemax = 255;
 

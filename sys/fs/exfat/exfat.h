@@ -87,6 +87,7 @@ struct exfat_mount {
     uint32_t mount_flags;            /* Mount flags */
     uint32_t error_count;            /* Count of I/O errors */
     struct timespec last_error_time;  /* Time of last error */
+    uint32_t free_clusters;    /* Cached count of free clusters */
     /* Node hash table */
     LIST_HEAD(exfat_hashhead, exfat_node) *node_hash;
     u_long node_hash_mask;
