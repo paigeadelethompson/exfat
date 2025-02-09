@@ -23,6 +23,7 @@
 #include <sys/bio.h>
 #include <sys/buf.h>
 #include <sys/endian.h>
+#include <sys/vnode.h>
 
 #include "exfat.h"
 #include "exfat_fat.h"
