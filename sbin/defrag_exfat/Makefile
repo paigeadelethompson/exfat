@@ -1,3 +1,7 @@
+MK_BRANCH_PROTECTION=no
+OPT_INIT_ALL=none
+MK_ZEROREGS=no
+
 PROG=	defrag_exfat
 MAN=	defrag_exfat.8
 

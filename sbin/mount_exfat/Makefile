@@ -1,3 +1,7 @@
+MK_BRANCH_PROTECTION=no
+OPT_INIT_ALL=none
+MK_ZEROREGS=no
+
 PROG=	mount_exfat
 MAN=	mount_exfat.8
 
