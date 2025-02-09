@@ -1060,4 +1060,55 @@ exfat_init_upcase(struct exfat_mount *emp)
                (uintmax_t)upcase_size);
 
     return 0;
+}
+
+int 
+exfat_read_rootdir(struct exfat_mount *emp)
+{
+    struct buf *bp;
+    uint32_t sector;
+    int error;
+
+    /* Read first sector of root directory */
+    sector = emp->boot.cluster_heap_offset +
+             ((emp->root_cluster - 2) << emp->boot.sectors_per_cluster_shift);
+
+    if (bootverbose) {
+        printf("exfat: reading root directory:\n");
+        printf("  cluster_heap_offset: %u\n", emp->boot.cluster_heap_offset);
+        printf("  root_cluster: %u\n", emp->root_cluster);
+        printf("  sectors_per_cluster_shift: %u\n", emp->boot.sectors_per_cluster_shift);
+        printf("  calculated sector: %u\n", sector);
+    }
+
+    error = bread(emp->devvp, sector, EXFAT_SECTOR_SIZE, NOCRED, &bp);
+    if (error) {
+        printf("exfat: failed to read root directory sector %u: %d\n",
+               sector, error);
+        return error;
+    }
+
+    /* Dump first 32 bytes of root directory */
+    if (bootverbose) {
+        uint8_t *data = (uint8_t *)bp->b_data;
+        printf("exfat: first directory entry:\n");
+        printf("  type: 0x%02x\n", data[0]);
+        printf("  data:");
+        for (int i = 0; i < 32; i++) {
+            if (i % 16 == 0) printf("\n   ");
+            printf(" %02x", data[i]);
+        }
+        printf("\n");
+    }
+
+    /* Scan for bitmap entry */
+    error = exfat_scan_directory(emp, bp, &emp->bitmap_cluster);
+    if (error) {
+        printf("exfat: failed to initialize bitmap: %d\n", error);
+        brelse(bp);
+        return error;
+    }
+
+    brelse(bp);
+    return 0;
 } 
