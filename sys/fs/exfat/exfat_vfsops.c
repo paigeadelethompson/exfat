@@ -196,8 +196,8 @@ exfat_mount(struct mount *mp)
         printf("  jump_boot: %02x %02x %02x\n", 
                bs->jump_boot[0], bs->jump_boot[1], bs->jump_boot[2]);
         printf("  fs_name: %.8s\n", bs->fs_name);
-        printf("  partition_offset: %u\n", le64toh(bs->partition_offset));
-        printf("  volume_length: %u\n", le64toh(bs->volume_length));
+        printf("  partition_offset: %lu\n", (unsigned long)le64toh(bs->partition_offset));
+        printf("  volume_length: %lu\n", (unsigned long)le64toh(bs->volume_length));
         printf("  fat_offset: %u\n", le32toh(bs->fat_offset));
         printf("  fat_length: %u\n", le32toh(bs->fat_length));
         printf("  cluster_heap_offset: %u\n", le32toh(bs->cluster_heap_offset));
