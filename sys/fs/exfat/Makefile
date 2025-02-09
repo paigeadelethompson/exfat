@@ -21,7 +21,4 @@ CLEANFILES= vnode_if.h vnode_if.c
 
 .PATH: ${.CURDIR}
 
-vnode_if.h: ${SYSDIR}/tools/vnode_if.awk ${SYSDIR}/kern/vnode_if.src
-	awk -f ${SYSDIR}/tools/vnode_if.awk ${SYSDIR}/kern/vnode_if.src -h
-
 .include "/usr/src/share/mk/bsd.kmod.mk" 
