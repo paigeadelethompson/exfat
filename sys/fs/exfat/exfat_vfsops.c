@@ -80,50 +80,6 @@ static const char *exfat_opts[] = {
     NULL
 };
 
-/* Add these helper functions before exfat_mount(): */
-
-/*
- * Read the FAT entry for a given cluster
- */
-static int
-exfat_read_fat_entry(struct exfat_mount *emp, uint32_t cluster, uint32_t *next)
-{
-    struct buf *bp;
-    uint32_t fat_offset;
-    uint32_t sec_offset;
-    int error;
-
-    fat_offset = cluster * sizeof(uint32_t);
-    sec_offset = fat_offset >> EXFAT_SECTOR_BITS;
-
-    error = bread(EXFAT_DEV(emp->mp),
-                 emp->boot.fat_offset + sec_offset,
-                 EXFAT_SECTOR_SIZE, NOCRED, &bp);
-    if (error) {
-        brelse(bp);
-        return error;
-    }
-
-    *next = le32toh(*(uint32_t *)(bp->b_data + (fat_offset & (EXFAT_SECTOR_SIZE - 1))));
-    brelse(bp);
-    
-    return 0;
-}
-
-/*
- * Find the bitmap directory entry
- */
-static int
-exfat_find_bitmap(struct exfat_mount *emp, struct exfat_entry_bitmap *bitmap)
-{
-    /* The bitmap is always in cluster 2 */
-    bitmap->type = EXFAT_ENTRY_BITMAP;
-    bitmap->first_cluster = 2;
-    bitmap->data_length = (emp->boot.cluster_count + 7) / 8;  /* Size in bytes */
-
-    return 0;
-}
-
 /* Track number of mounted filesystems */
 static volatile u_int exfat_mount_count = 0;
 static struct mtx exfat_mount_lock;
