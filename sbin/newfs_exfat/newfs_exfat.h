@@ -56,7 +56,8 @@
 /* ExFAT boot sector constants */
 #define EXFAT_BOOT_SIGNATURE       0xAA55
 #define EXFAT_BOOT_CODE_SIZE       390
-#define EXFAT_BOOT_REGION_SIZE     24  /* sectors */
+#define EXFAT_BOOT_REGION_SIZE     12  /* sectors */
+#define EXFAT_BACKUP_BOOT_SECTOR   12  /* Sector number where backup boot region starts */
 
 /* Extended boot region validation pattern */
 /* Per ExFAT spec section 3.1:

@@ -168,6 +168,12 @@ write_boot_sector(struct mkfs_exfat_ctx *ctx)
             warn("Failed to write boot sector %d", i);
             return -1;
         }
+        /* Write same sector to backup region */
+        if (write_sector(ctx, EXFAT_BACKUP_BOOT_SECTOR + i, 
+                        boot_region + (i * EXFAT_SECTOR_SIZE)) < 0) {
+            warn("Failed to write backup boot sector %d", i);
+            return -1;
+        }
     }
 
     report_progress(ctx, DEBUG_BASIC, "Boot sector written successfully");
