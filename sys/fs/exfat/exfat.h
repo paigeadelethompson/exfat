@@ -32,10 +32,17 @@ struct vnode;
 struct mount;
 enum vtype;  /* Forward declaration of vtype enum */
 
+/* ExFAT filesystem constants */
+#define EXFAT_SECTOR_SIZE       512
+#define EXFAT_SECTOR_BITS      9
+#define EXFAT_BOOT_REGION_SIZE  12  /* sectors */
+
+/* ExFAT boot sector constants */
+#define EXFAT_BOOT_SIGNATURE   0xAA55
+#define EXFAT_BOOT_CODE_SIZE   390
+
 /* ExFAT specific constants */
 #define EXFAT_IOC_MAGIC       'E'
-#define EXFAT_SECTOR_SIZE     512
-#define EXFAT_SECTOR_BITS     9
 
 /* Cluster status values */
 #define EXFAT_CLUSTER_FREE    0x00000000
@@ -44,28 +51,28 @@ enum vtype;  /* Forward declaration of vtype enum */
 
 /* ExFAT volume boot record structure */
 struct exfat_boot_record {
-    uint8_t  jump_boot[3];
-    uint8_t  fs_name[8];
-    uint8_t  must_be_zero[53];
-    uint64_t partition_offset;
-    uint64_t volume_length;
-    uint32_t fat_offset;
-    uint32_t fat_length;
-    uint32_t cluster_heap_offset;
-    uint32_t cluster_count;
-    uint32_t root_dir_cluster;
-    uint32_t volume_serial;
-    uint16_t fs_revision;
-    uint16_t volume_flags;
+    uint8_t  jump_boot[3];         /* Boot strap short or near jump */
+    uint8_t  fs_name[8];           /* "EXFAT   " */
+    uint8_t  must_be_zero[53];     /* Zero field */
+    uint64_t partition_offset;      /* Partition offset in sectors */
+    uint64_t volume_length;        /* Volume length in sectors */
+    uint32_t fat_offset;           /* FAT offset in sectors */
+    uint32_t fat_length;           /* FAT length in sectors */
+    uint32_t cluster_heap_offset;  /* First cluster sector */
+    uint32_t cluster_count;        /* Total clusters */
+    uint32_t root_dir_cluster;     /* Root directory cluster */
+    uint32_t volume_serial;        /* Volume serial number */
+    uint16_t fs_revision;          /* Filesystem revision */
+    uint16_t volume_flags;         /* Volume flags */
     uint8_t  volume_state;      /* Clean/dirty state */
-    uint8_t  bytes_per_sector_shift;
-    uint8_t  sectors_per_cluster_shift;
-    uint8_t  number_of_fats;
-    uint8_t  drive_select;
-    uint8_t  percent_in_use;
-    uint8_t  reserved[7];
-    uint8_t  boot_code[390];
-    uint16_t boot_signature;
+    uint8_t  bytes_per_sector_shift;  /* Bytes per sector (as power of 2) */
+    uint8_t  sectors_per_cluster_shift; /* Sectors per cluster (as power of 2) */
+    uint8_t  number_of_fats;       /* Number of FATs */
+    uint8_t  drive_select;         /* Drive select */
+    uint8_t  percent_in_use;       /* Percentage in use */
+    uint8_t  reserved[7];          /* Reserved */
+    uint8_t  boot_code[390];       /* Boot code */
+    uint8_t  boot_signature[2];    /* Boot signature (0x55 0xAA) */
 } __packed;
 
 /* Mount structure for ExFAT */
