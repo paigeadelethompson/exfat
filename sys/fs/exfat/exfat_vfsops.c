@@ -41,6 +41,7 @@
 #include <sys/malloc.h>
 #include <sys/conf.h>    /* For struct cdev */
 #include <geom/geom.h>
+#include <geom/geom_vfs.h>  /* For gb_bufops */
 #include <sys/mutex.h>
 
 #include "exfat.h"
@@ -226,7 +227,7 @@ exfat_mount(struct mount *mp)
     if (devvp->v_type == VCHR) {
         struct cdev *dev = devvp->v_rdev;
         dev_ref(dev);
-        devvp->v_bufobj.bo_ops = g_vfs_bufops;
+        devvp->v_bufobj.bo_ops = &gb_bufops;
         devvp->v_bufobj.bo_private = dev;
         devvp->v_bufobj.bo_bsize = EXFAT_SECTOR_SIZE;
     }
