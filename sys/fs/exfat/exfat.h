@@ -357,5 +357,10 @@ void exfat_time_to_unix(uint32_t date, uint32_t time, struct timespec *ts);
 int exfat_handle_error(struct exfat_mount *emp, struct vnode *vp, int error, int flags);
 int exfat_extend_file(struct vnode *vp, off_t new_size);
 int exfat_init_directory(struct exfat_mount *emp, uint32_t cluster);
+int exfat_mount(struct mount *mp);
+int exfat_unmount(struct mount *mp, int mntflags);
+int exfat_root(struct mount *mp, int flags, struct vnode **vpp);
+void exfat_cleanup_bitmap(struct exfat_mount *emp);
+int exfat_read_rootdir(struct exfat_mount *emp);
 
 #endif /* _FS_EXFAT_H_ */ 

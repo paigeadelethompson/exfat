@@ -1067,6 +1067,7 @@ exfat_read_rootdir(struct exfat_mount *emp)
 {
     struct buf *bp;
     uint32_t sector;
+    struct exfat_scan_ctx ctx;
     int error;
 
     /* Read first sector of root directory */
@@ -1101,8 +1102,13 @@ exfat_read_rootdir(struct exfat_mount *emp)
         printf("\n");
     }
 
+    /* Initialize scan context */
+    ctx.bp = bp;
+    ctx.offset = 0;
+    ctx.emp = emp;
+
     /* Scan for bitmap entry */
-    error = exfat_scan_directory(emp, bp, &emp->bitmap_cluster);
+    error = exfat_scan_directory(emp->devvp, &ctx);
     if (error) {
         printf("exfat: failed to initialize bitmap: %d\n", error);
         brelse(bp);
