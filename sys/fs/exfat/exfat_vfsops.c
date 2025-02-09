@@ -193,9 +193,9 @@ exfat_mount(struct mount *mp)
     NDFREE_PNBUF(&nd);
 
     /* Check if it's a block device */
-    if (devvp->v_type != VBLK && devvp->v_type != VREG) {
+    if (devvp->v_type != VBLK && devvp->v_type != VREG && devvp->v_type != VCHR) {
         if (bootverbose)
-            printf("exfat: not a block device or regular file (type=%d)\n", devvp->v_type);
+            printf("exfat: not a block device, character device, or regular file (type=%d)\n", devvp->v_type);
         vput(devvp);
         free(emp, M_EXFAT);
         return ENOTBLK;

@@ -471,11 +471,18 @@ init_filesystem(struct mkfs_exfat_ctx *ctx)
 
     size = (off_t)blocks * block_size;
 #else
-    if (fstat(ctx->fd, &st) < 0) {
-        warn("Failed to get device size");
-        return -1;
+    /* Get device size using DIOCGMEDIASIZE */
+    if (ioctl(ctx->fd, DIOCGMEDIASIZE, &size) < 0) {
+        /* If that fails, try fstat */
+        if (fstat(ctx->fd, &st) < 0) {
+            warn("Failed to get device size");
+            return -1;
+        }
+        size = st.st_size;
     }
-    size = st.st_size;
+    
+    if (ctx->verbose >= DEBUG_BASIC)
+        printf("Device size: %jd bytes\n", (intmax_t)size);
 #endif
 
     if (size <= 0) {
