@@ -212,6 +212,7 @@ exfat_mount(struct mount *mp)
     /* Calculate mount parameters */
     emp->bytes_per_cluster = EXFAT_SECTOR_SIZE << emp->boot.sectors_per_cluster_shift;
     emp->clusters_count = emp->boot.cluster_count;
+    emp->root_cluster = emp->boot.root_dir_cluster;
 
     /* Initialize other mount structure fields */
     if (bootverbose)
