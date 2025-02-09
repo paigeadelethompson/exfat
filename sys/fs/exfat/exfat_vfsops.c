@@ -224,9 +224,11 @@ exfat_mount(struct mount *mp)
 
     /* Set up buffer I/O strategy */
     if (devvp->v_type == VCHR) {
-        devvp->v_bufobj.bo_ops = devvp->v_rdev->si_bufobj.bo_ops;
-        devvp->v_bufobj.bo_private = devvp->v_rdev;
-        devvp->v_bufobj.bo_flag |= BO_STRATEGY;
+        struct cdev *dev = devvp->v_rdev;
+        dev_ref(dev);
+        devvp->v_bufobj.bo_ops = g_vfs_bufops;
+        devvp->v_bufobj.bo_private = dev;
+        devvp->v_bufobj.bo_bsize = EXFAT_SECTOR_SIZE;
     }
 
     /* Set the mounted device in mount structure */
