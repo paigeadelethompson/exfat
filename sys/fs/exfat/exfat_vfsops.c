@@ -285,7 +285,8 @@ fail:
         printf("exfat: mount failed\n");
     if (emp) {
         if (emp->devvp) {
-            g_vfs_close(cp);
+            VOP_UNLOCK(devvp);  /* Release the lock before closing */
+            g_vfs_close(cp);    /* Now safe to close */
             atomic_store_rel_ptr((uintptr_t *)&dev->si_mountpt, 0);
             mntfs_freevp(devvp);
         }
