@@ -54,7 +54,16 @@ static vfs_root_t      exfat_root;
 static vfs_statfs_t    exfat_statfs;
 static vfs_sync_t      exfat_sync;
 
+static int
+exfat_init(struct vfsconf *vfsp)
+{
+    if (bootverbose)
+        printf("ExFAT: Paige A. Thompson (Ravenhammer Research <paige@paige.bio>)\n");
+    return 0;
+}
+
 static struct vfsops exfat_vfsops = {
+    .vfs_init       = exfat_init,
     .vfs_mount      = exfat_mount,
     .vfs_unmount    = exfat_unmount,
     .vfs_root       = exfat_root,
@@ -114,12 +123,17 @@ exfat_find_bitmap(struct exfat_mount *emp, struct exfat_entry_bitmap *bitmap)
     /* Start at root directory */
     cluster = emp->boot.root_dir_cluster;
 
+    if (bootverbose)
+        printf("exfat: searching for bitmap in root dir (cluster %u)\n", cluster);
+
     /* Read first cluster of root directory */
     error = bread(emp->devvp,
                  emp->boot.cluster_heap_offset + 
                  ((cluster - 2) << emp->boot.sectors_per_cluster_shift),
                  emp->bytes_per_cluster, NOCRED, &bp);
     if (error) {
+        if (bootverbose)
+            printf("exfat: failed to read root directory cluster: %d\n", error);
         brelse(bp);
         return error;
     }
@@ -128,13 +142,22 @@ exfat_find_bitmap(struct exfat_mount *emp, struct exfat_entry_bitmap *bitmap)
     for (offset = 0; offset < emp->bytes_per_cluster; offset += sizeof(struct exfat_entry_bitmap)) {
         struct exfat_entry_bitmap *entry = (struct exfat_entry_bitmap *)(bp->b_data + offset);
         
+        if (bootverbose)
+            printf("exfat: dir entry at offset %u: type=0x%02x\n", 
+                   offset, entry->type);
+
         if (entry->type == EXFAT_ENTRY_BITMAP) {
+            if (bootverbose)
+                printf("exfat: found bitmap entry: cluster=%u, length=%lu\n",
+                        entry->first_cluster, (unsigned long)entry->data_length);
             memcpy(bitmap, entry, sizeof(*bitmap));
             brelse(bp);
             return 0;
         }
     }
 
+    if (bootverbose)
+        printf("exfat: bitmap entry not found in root directory\n");
     brelse(bp);
     return ENOENT;
 }
