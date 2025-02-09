@@ -17,6 +17,8 @@
 
 #include <sys/param.h>
 #include <sys/stat.h>
+#include <sys/ioctl.h>
+#include <sys/disk.h>  /* For DIOCGMEDIASIZE */
 #include <err.h>
 #include <errno.h>
 #include <fcntl.h>
