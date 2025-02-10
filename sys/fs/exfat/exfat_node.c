@@ -26,6 +26,7 @@
 #include <sys/bio.h>
 #include <sys/buf.h>
 #include <sys/mutex.h>
+#include <sys/hash.h>
 
 #include "exfat.h"
 #include "exfat_node.h"
@@ -65,7 +66,7 @@ exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
 
     /* Check hash table first */
     mtx_lock(&emp->hash_mtx.mtx);
-    LIST_FOREACH(ep, &emp->node_hash[cluster & emp->node_hash_mask], hash) {
+    LIST_FOREACH(ep, &emp->node_hash[cluster & emp->node_hash_mask], next) {
         if (ep->cluster == cluster && ETOV(ep)->v_mount == mp) {
             vp = ETOV(ep);
             VI_LOCK(vp);
@@ -105,7 +106,7 @@ exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
 
     /* Add to hash table */
     mtx_lock(&emp->hash_mtx.mtx);
-    LIST_INSERT_HEAD(&emp->node_hash[cluster & emp->node_hash_mask], ep, hash);
+    LIST_INSERT_HEAD(&emp->node_hash[cluster & emp->node_hash_mask], ep, next);
     mtx_unlock(&emp->hash_mtx.mtx);
 
     *vpp = vp;
@@ -220,7 +221,7 @@ exfat_destroy_nodes(struct exfat_mount *emp)
     }
 }
 
-/* Update node lookup function */
+/* Node lookup function */
 struct exfat_node *
 exfat_hash_lookup(struct exfat_mount *emp, uint32_t cluster)
 {
@@ -234,7 +235,7 @@ exfat_hash_lookup(struct exfat_mount *emp, uint32_t cluster)
     return NULL;
 }
 
-/* Update node insert function */
+/* Node insert function */
 void
 exfat_hash_insert(struct exfat_mount *emp, struct exfat_node *ep)
 {
@@ -242,6 +243,7 @@ exfat_hash_insert(struct exfat_mount *emp, struct exfat_node *ep)
     LIST_INSERT_HEAD(&emp->node_hash[hash_idx], ep, next);
 }
 
+/* Node remove function */
 void
 exfat_hash_remove(struct exfat_mount *emp, struct exfat_node *ep)
 {
