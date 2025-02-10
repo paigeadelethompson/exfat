@@ -32,7 +32,6 @@ int exfat_fat_read(struct exfat_mount *emp, uint32_t cluster, uint32_t *next);
 int exfat_fat_write(struct exfat_mount *emp, uint32_t cluster, uint32_t next);
 int exfat_cluster_alloc(struct exfat_mount *emp, uint32_t *cluster);
 int exfat_cluster_free(struct exfat_mount *emp, uint32_t cluster);
-int exfat_cluster_next(struct exfat_mount *emp, uint32_t cluster);
 int exfat_cluster_link(struct exfat_mount *emp, uint32_t cluster, uint32_t next);
 int exfat_cluster_extend(struct exfat_mount *emp, uint32_t *cluster);
 
