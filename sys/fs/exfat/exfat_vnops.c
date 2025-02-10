@@ -232,8 +232,11 @@ exfat_read(struct vop_read_args *ap)
 
     /* Skip to the cluster containing our offset */
     while (offset >= cluster_size) {
-        cluster = exfat_cluster_next(emp, cluster);
-        if (cluster == EXFAT_CLUSTER_END) {
+        uint32_t next;
+        error = exfat_cluster_next(emp, cluster, &next);
+        if (error == 0)
+            cluster = next;
+        else {
             error = EIO;
             goto out;
         }
@@ -261,8 +264,11 @@ exfat_read(struct vop_read_args *ap)
 
         /* Move to next cluster if needed */
         if (uio->uio_resid > 0 && uio->uio_offset < ep->finfo.file_size) {
-            cluster = exfat_cluster_next(emp, cluster);
-            if (cluster == EXFAT_CLUSTER_END) {
+            uint32_t next;
+            error = exfat_cluster_next(emp, cluster, &next);
+            if (error == 0)
+                cluster = next;
+            else {
                 error = EIO;
                 goto out;
             }
@@ -439,17 +445,13 @@ exfat_write(struct vop_write_args *ap)
 
         /* Skip to the cluster containing our offset */
         while (offset >= cluster_size) {
-            cluster = exfat_cluster_next(emp, cluster);
-            if (cluster == EXFAT_CLUSTER_END) {
-                /* Need to allocate new cluster */
-                uint32_t new_cluster;
-                error = exfat_cluster_alloc(emp, &new_cluster);
-                if (error)
-                    goto out;
-                error = exfat_cluster_link(emp, cluster, new_cluster);
-                if (error)
-                    goto out;
-                cluster = new_cluster;
+            uint32_t next;
+            error = exfat_cluster_next(emp, cluster, &next);
+            if (error == 0)
+                cluster = next;
+            else {
+                error = EIO;
+                goto out;
             }
             offset -= cluster_size;
         }
@@ -988,9 +990,13 @@ exfat_strategy(struct vop_strategy_args *ap)
 
     /* Skip to correct cluster */
     while (offset >= emp->bytes_per_cluster) {
-        cluster = exfat_cluster_next(emp, cluster);
-        if (cluster == EXFAT_CLUSTER_END)
+        uint32_t next;
+        error = exfat_cluster_next(emp, cluster, &next);
+        if (error == 0)
+            cluster = next;
+        else {
             return EIO;
+        }
         offset -= emp->bytes_per_cluster;
     }
 
