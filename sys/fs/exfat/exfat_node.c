@@ -171,7 +171,7 @@ exfat_node_put(struct exfat_node *ep)
         printf("exfat: releasing node for cluster %u\n", ep->cluster);
 
     mtx_lock(&emp->hash_mtx.mtx);
-    LIST_REMOVE(ep, hash);
+    LIST_REMOVE(ep, next);
     mtx_unlock(&emp->hash_mtx.mtx);
 
     free(ep, M_EXFAT);
@@ -209,7 +209,7 @@ exfat_destroy_nodes(struct exfat_mount *emp)
         for (u_long i = 0; i <= emp->node_hash_mask; i++) {
             struct exfat_node *node;
             while ((node = LIST_FIRST(&emp->node_hash[i])) != NULL) {
-                LIST_REMOVE(node, hash);
+                LIST_REMOVE(node, next);
                 free(node, M_EXFAT);
             }
         }
