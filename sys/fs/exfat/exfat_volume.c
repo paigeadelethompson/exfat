@@ -1050,12 +1050,19 @@ exfat_init_upcase(struct exfat_mount *emp)
     sector = emp->boot.cluster_heap_offset +
              ((emp->upcase_cluster - 2) << emp->boot.sectors_per_cluster_shift);
 
-    /* Read in chunks that fit in the buffer cache */
+    /* Read the upcase table cluster by cluster */
     uint8_t *dest = (uint8_t *)emp->upcase;
     size_t remaining = upcase_size;
-    size_t chunk_size = MIN(65536, remaining);
+    uint32_t current_cluster = emp->upcase_cluster;
     
     while (remaining > 0) {
+        /* Read one cluster at a time */
+        size_t chunk_size = MIN(emp->bytes_per_cluster, remaining);
+        
+        /* Calculate sector for current cluster */
+        sector = emp->boot.cluster_heap_offset +
+                 ((current_cluster - 2) << emp->boot.sectors_per_cluster_shift);
+        
         error = bread(emp->devvp, sector, chunk_size, NOCRED, &bp);
         if (error) {
             free(emp->upcase, M_EXFAT);
@@ -1068,9 +1075,16 @@ exfat_init_upcase(struct exfat_mount *emp)
         brelse(bp);
         
         dest += chunk_size;
-        sector += chunk_size / EXFAT_SECTOR_SIZE;
-        remaining -= chunk_size;
-        chunk_size = MIN(65536, remaining);
+        
+        /* Get next cluster if we need more data */
+        if (remaining > 0) {
+            error = exfat_next_cluster(emp, current_cluster, &current_cluster);
+            if (error) {
+                free(emp->upcase, M_EXFAT);
+                emp->upcase = NULL;
+                return error;
+            }
+        }
     }
 
     if (bootverbose)
