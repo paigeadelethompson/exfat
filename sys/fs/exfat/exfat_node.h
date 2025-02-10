@@ -21,22 +21,28 @@
 #include <sys/types.h>
 #include <sys/queue.h>
 #include <sys/timespec.h>
+#include <sys/param.h>
+#include <sys/mount.h>
+#include <sys/vnode.h>
 
 /* Forward declarations */
 struct exfat_mount;
 
-/* In-memory node structure */
+/* Node structure */
 struct exfat_node {
-    struct vnode    *vnode;         /* Associated vnode */
-    uint32_t        cluster;        /* First cluster */
-    struct timespec create_time;    /* Creation time */
-    struct timespec modify_time;    /* Last modification time */
-    struct timespec access_time;    /* Last access time */
+    struct vnode *vnode;           /* Associated vnode */
+    uint32_t cluster;             /* First cluster */
+    struct exfat_node *next;      /* Next in hash chain */
+    int type;                     /* Node type (file/directory) */
+    struct mount *mp;             /* Mount point */
     struct {
-        uint32_t    first_cluster;  /* First cluster of file */
-        uint64_t    file_size;      /* File size in bytes */
-        uint64_t    valid_size;     /* Valid data size */
-        uint16_t    attributes;     /* File attributes */
+        uint32_t first_cluster;   /* First cluster of file */
+        uint64_t file_size;       /* File size in bytes */
+        uint64_t valid_size;      /* Valid data size */
+        uint16_t attributes;      /* File attributes */
+        struct timespec create_time;    /* Creation time */
+        struct timespec modify_time;    /* Last modification time */
+        struct timespec access_time;    /* Last access time */
     } finfo;
     LIST_ENTRY(exfat_node) hash;    /* Hash chain */
 };
@@ -66,7 +72,8 @@ int exfat_read_node_info(struct exfat_mount *emp, struct exfat_node *ep);
 void exfat_node_put(struct exfat_node *ep);
 int exfat_init_nodes(struct exfat_mount *emp);
 void exfat_destroy_nodes(struct exfat_mount *emp);
-struct exfat_node *exfat_node_lookup(struct exfat_mount *emp, uint32_t cluster);
-int exfat_node_insert(struct exfat_mount *emp, struct exfat_node *node);
+struct exfat_node *exfat_hash_lookup(struct exfat_mount *emp, uint32_t cluster);
+void exfat_hash_insert(struct exfat_mount *emp, struct exfat_node *node);
+void exfat_hash_remove(struct exfat_mount *emp, struct exfat_node *node);
 
 #endif /* _FS_EXFAT_NODE_H_ */ 

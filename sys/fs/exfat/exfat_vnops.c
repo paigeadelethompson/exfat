@@ -24,12 +24,8 @@
 #include <sys/bio.h>
 #include <sys/buf.h>
 #include <sys/malloc.h>
-#include <sys/dirent.h>
-#include <sys/uio.h>
-#include <sys/fcntl.h>
-
-#include "exfat.h"
 #include "exfat_node.h"
+#include "exfat.h"
 #include "exfat_fat.h"
 #include "exfat_volume.h"
 
