@@ -280,16 +280,26 @@ exfat_cluster_extend(struct exfat_mount *emp, uint32_t *cluster)
  * Get next cluster in chain
  */
 int
-exfat_cluster_next(struct exfat_mount *emp, uint32_t cluster)
+exfat_next_cluster(struct exfat_mount *emp, uint32_t current, uint32_t *next)
 {
-    uint32_t next;
+    uint32_t fat_entry;
     int error;
 
-    error = exfat_fat_read(emp, cluster, &next);
+    /* Read FAT entry */
+    error = exfat_fat_read(emp, current, &fat_entry);
     if (error)
         return error;
 
-    return (next == EXFAT_CLUSTER_END) ? error : next;
+    /* Check for end of chain */
+    if (fat_entry >= EXFAT_CLUSTER_END)
+        return ENOENT;
+
+    /* Check for valid cluster number */
+    if (fat_entry < EXFAT_CLUSTER_FIRST || fat_entry >= emp->clusters_count + 2)
+        return EIO;
+
+    *next = fat_entry;
+    return 0;
 }
 
 /*

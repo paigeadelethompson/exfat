@@ -238,6 +238,9 @@ extern struct vop_vector exfat_vnodeops;
 
 /* FAT operations */
 int exfat_cluster_extend(struct exfat_mount *emp, uint32_t *cluster);
+int exfat_fat_get_cluster(struct exfat_mount *emp, uint32_t cluster, uint32_t *next);
+int exfat_fat_set_cluster(struct exfat_mount *emp, uint32_t cluster, uint32_t next);
+int exfat_next_cluster(struct exfat_mount *emp, uint32_t current, uint32_t *next);
 
 /* Access control */
 int exfat_access(struct vnode *vp, accmode_t accmode, struct ucred *cred,
