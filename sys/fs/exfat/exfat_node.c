@@ -224,26 +224,26 @@ exfat_destroy_nodes(struct exfat_mount *emp)
 struct exfat_node *
 exfat_hash_lookup(struct exfat_mount *emp, uint32_t cluster)
 {
-    struct exfat_node *node;
+    struct exfat_node *ep;
     u_long hash = cluster & emp->node_hash_mask;
 
-    LIST_FOREACH(node, &emp->node_hash[hash], next) {
-        if (node->cluster == cluster)
-            return node;
+    LIST_FOREACH(ep, &emp->node_hash[cluster & emp->node_hash_mask], next) {
+        if (ep->cluster == cluster)
+            return ep;
     }
     return NULL;
 }
 
 /* Update node insert function */
 void
-exfat_hash_insert(struct exfat_mount *emp, struct exfat_node *node)
+exfat_hash_insert(struct exfat_mount *emp, struct exfat_node *ep)
 {
-    u_long hash = node->cluster & emp->node_hash_mask;
-    LIST_INSERT_HEAD(&emp->node_hash[hash], node, next);
+    u_long hash = ep->cluster & emp->node_hash_mask;
+    LIST_INSERT_HEAD(&emp->node_hash[hash], ep, next);
 }
 
 void
-exfat_hash_remove(struct exfat_mount *emp, struct exfat_node *node)
+exfat_hash_remove(struct exfat_mount *emp, struct exfat_node *ep)
 {
-    LIST_REMOVE(node, next);
+    LIST_REMOVE(ep, next);
 } 
