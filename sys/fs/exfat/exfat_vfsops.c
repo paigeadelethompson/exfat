@@ -40,6 +40,7 @@
 #include <sys/buf.h>
 #include <sys/malloc.h>
 #include <sys/conf.h>    /* For struct cdev */
+#include <sys/rwlock.h>  /* For rw_wlock/rw_wunlock */
 #include <geom/geom.h>
 #include <geom/geom_vfs.h>  /* For gb_bufops */
 #include <sys/mutex.h>
