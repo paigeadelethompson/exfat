@@ -48,6 +48,7 @@ enum vtype;  /* Forward declaration of vtype enum */
 #define EXFAT_CLUSTER_FREE    0x00000000
 #define EXFAT_CLUSTER_END     0xFFFFFFFF
 #define EXFAT_CLUSTER_BAD     0xFFFFFFF7
+#define EXFAT_CLUSTER_FIRST   2         /* First valid cluster number */
 
 /* ExFAT volume boot record structure */
 struct exfat_boot_record {
