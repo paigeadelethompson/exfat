@@ -1055,16 +1055,29 @@ exfat_init_upcase(struct exfat_mount *emp)
     sector = emp->boot.cluster_heap_offset +
              ((emp->upcase_cluster - 2) << emp->boot.sectors_per_cluster_shift);
 
-    error = bread(emp->devvp, sector, upcase_size, NOCRED, &bp);
-    if (error) {
-        free(emp->upcase, M_EXFAT);
-        emp->upcase = NULL;
-        return error;
-    }
+    /* Read the upcase table in chunks */
+    uint8_t *dest = (uint8_t *)emp->upcase;
+    size_t remaining = upcase_size;
+    size_t offset = 0;
 
-    /* Copy upcase table data */
-    memcpy(emp->upcase, bp->b_data, upcase_size);
-    brelse(bp);
+    while (remaining > 0) {
+        size_t chunk_size = MIN(MAXBSIZE, remaining);
+        
+        error = bread(emp->devvp, sector + (offset / EXFAT_SECTOR_SIZE), 
+                     chunk_size, NOCRED, &bp);
+        if (error) {
+            free(emp->upcase, M_EXFAT);
+            emp->upcase = NULL;
+            brelse(bp);
+            return error;
+        }
+
+        memcpy(dest + offset, bp->b_data, chunk_size);
+        brelse(bp);
+
+        remaining -= chunk_size;
+        offset += chunk_size;
+    }
 
     if (bootverbose)
         printf("exfat: upcase table initialized (%ju bytes)\n", (uintmax_t)upcase_size);
