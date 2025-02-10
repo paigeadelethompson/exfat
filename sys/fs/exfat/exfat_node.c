@@ -64,37 +64,45 @@ exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
     if (bootverbose)
         printf("exfat: getting node for cluster %u\n", cluster);
 
+    /* Validate cluster number */
+    if (cluster < EXFAT_CLUSTER_FIRST || cluster >= emp->clusters_count + 2) {
+        printf("exfat: invalid cluster number %u\n", cluster);
+        return EINVAL;
+    }
+
     /* Check hash table first */
     mtx_lock(&emp->hash_mtx.mtx);
-    LIST_FOREACH(ep, &emp->node_hash[cluster & emp->node_hash_mask], next) {
-        if (ep->cluster == cluster && ETOV(ep)->v_mount == mp) {
-            vp = ETOV(ep);
-            VI_LOCK(vp);
-            mtx_unlock(&emp->hash_mtx.mtx);
-            error = vget(vp, LK_EXCLUSIVE | LK_RETRY);
-            if (error)
-                return error;
+    ep = exfat_hash_lookup(emp, cluster);
+    if (ep) {
+        vp = ETOV(ep);
+        error = vget(vp, LK_EXCLUSIVE);
+        mtx_unlock(&emp->hash_mtx.mtx);
+        if (error == 0) {
             *vpp = vp;
-            if (bootverbose)
-                printf("exfat: found existing node\n");
             return 0;
         }
+        return error;
     }
     mtx_unlock(&emp->hash_mtx.mtx);
 
-    if (bootverbose)
-        printf("exfat: creating new node\n");
-
     /* Allocate new node */
-    error = getnewvnode("exfat", mp, &exfat_vnodeops, &vp);
-    if (error)
-        return error;
+    ep = malloc(sizeof(struct exfat_node), M_EXFAT, M_WAITOK | M_ZERO);
+    if (ep == NULL)
+        return ENOMEM;
 
-    ep = malloc(sizeof(*ep), M_EXFAT, M_WAITOK | M_ZERO);
+    /* Get new vnode */
+    error = getnewvnode("exfat", mp, &exfat_vnodeops, &vp);
+    if (error) {
+        free(ep, M_EXFAT);
+        return error;
+    }
+
+    /* Initialize node */
     ep->cluster = cluster;
-    ep->vnode = vp;
+    ep->type = type;
+    ep->mp = mp;
     vp->v_data = ep;
-    vp->v_type = type;
+    ep->vnode = vp;
 
     /* Read file/directory information */
     error = exfat_read_node_info(emp, ep);
@@ -106,12 +114,10 @@ exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
 
     /* Add to hash table */
     mtx_lock(&emp->hash_mtx.mtx);
-    LIST_INSERT_HEAD(&emp->node_hash[cluster & emp->node_hash_mask], ep, next);
+    exfat_hash_insert(emp, ep);
     mtx_unlock(&emp->hash_mtx.mtx);
 
     *vpp = vp;
-    if (bootverbose)
-        printf("exfat: node creation complete\n");
     return 0;
 }
 
