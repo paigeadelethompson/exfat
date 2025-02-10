@@ -285,17 +285,13 @@ fail:
         printf("exfat: mount failed\n");
     if (emp) {
         if (emp->devvp) {
-            /* First clear mount point */
-            atomic_store_rel_ptr((uintptr_t *)&dev->si_mountpt, 0);
-            
-            /* Lock vnode and topology before closing */
-            vn_lock(devvp, LK_EXCLUSIVE | LK_RETRY);
+            /* Close GEOM first with only topology lock */
             g_topology_lock();
             g_vfs_close(cp);    /* Close GEOM with locks held */
             g_topology_unlock();
-            VOP_UNLOCK(devvp);
             
-            /* Finally free the vnode */
+            /* Then clear mount point and free vnode */
+            atomic_store_rel_ptr((uintptr_t *)&dev->si_mountpt, 0);
             mntfs_freevp(devvp);
         }
         free(emp, M_EXFAT);
