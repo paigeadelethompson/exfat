@@ -225,9 +225,9 @@ struct exfat_node *
 exfat_hash_lookup(struct exfat_mount *emp, uint32_t cluster)
 {
     struct exfat_node *ep;
-    u_long hash = cluster & emp->node_hash_mask;
+    u_long hash_idx = cluster & emp->node_hash_mask;
 
-    LIST_FOREACH(ep, &emp->node_hash[cluster & emp->node_hash_mask], next) {
+    LIST_FOREACH(ep, &emp->node_hash[hash_idx], next) {
         if (ep->cluster == cluster)
             return ep;
     }
@@ -238,8 +238,8 @@ exfat_hash_lookup(struct exfat_mount *emp, uint32_t cluster)
 void
 exfat_hash_insert(struct exfat_mount *emp, struct exfat_node *ep)
 {
-    u_long hash = ep->cluster & emp->node_hash_mask;
-    LIST_INSERT_HEAD(&emp->node_hash[hash], ep, next);
+    u_long hash_idx = ep->cluster & emp->node_hash_mask;
+    LIST_INSERT_HEAD(&emp->node_hash[hash_idx], ep, next);
 }
 
 void
