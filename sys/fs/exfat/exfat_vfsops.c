@@ -171,7 +171,7 @@ exfat_mount(struct mount *mp)
         if (bootverbose)
             printf("exfat: failed to allocate mount structure\n");
         error = ENOMEM;
-        goto fail;
+        goto error_exit;
     }
 
     /* Set up mount structure */
@@ -185,8 +185,7 @@ exfat_mount(struct mount *mp)
     if (error) {
         if (bootverbose)
             printf("exfat: failed to read boot sector: %d\n", error);
-        brelse(bp);
-        goto fail;
+        goto error_exit;
     }
 
     /* Copy and verify boot sector */
@@ -230,13 +229,11 @@ exfat_mount(struct mount *mp)
         printf("  sectors_per_cluster_shift: %u\n", bs->sectors_per_cluster_shift);
     }
 
-    brelse(bp);
-
     if (memcmp(emp->boot.fs_name, "EXFAT   ", 8) != 0) {
         if (bootverbose)
             printf("exfat: invalid filesystem signature\n");
         error = EINVAL;
-        goto fail;
+        goto error_exit;
     }
 
     if (bootverbose) {
@@ -261,7 +258,7 @@ exfat_mount(struct mount *mp)
     if (error) {
         if (bootverbose)
             printf("exfat: failed to initialize bitmap: %d\n", error);
-        goto fail;
+        goto error_exit;
     }
 
     if (bootverbose)
@@ -270,7 +267,7 @@ exfat_mount(struct mount *mp)
     if (error) {
         if (bootverbose)
             printf("exfat: failed to initialize upcase table: %d\n", error);
-        goto fail;
+        goto error_exit;
     }
 
     /* Set the mount */
@@ -281,30 +278,26 @@ exfat_mount(struct mount *mp)
         printf("exfat: mount successful\n");
     return 0;
 
-fail:
-    if (bootverbose)
-        printf("exfat: mount failed\n");
-    if (emp) {
-        if (emp->devvp) {
-            /* Close GEOM first */
-            g_topology_lock();
-            g_vfs_close(cp);
-            g_topology_unlock();
-            
-            /* Clear buffer object flags */
-            BO_LOCK(&devvp->v_bufobj);
-            devvp->v_bufobj.bo_flag &= ~BO_NOBUFS;
-            BO_UNLOCK(&devvp->v_bufobj);
-            
-            /* Clear mountpoint and cleanup vnode */
-            atomic_store_rel_ptr((uintptr_t *)&dev->si_mountpt, 0);
-            vn_lock(devvp, LK_EXCLUSIVE | LK_RETRY);
-            mntfs_freevp(devvp);
-            dev_rel(dev);
-        }
-        free(emp, M_EXFAT);
+error_exit:
+    if (bp != NULL)
+        brelse(bp);
+
+    // Only try to close if cp was successfully opened
+    if (cp != NULL) {
+        g_topology_lock();
+        g_vfs_close(cp);
+        g_topology_unlock();
     }
-    return error;
+
+    // Rest of cleanup...
+    if (devvp != NULL) {
+        vn_lock(devvp, LK_EXCLUSIVE | LK_RETRY); 
+        mntfs_freevp(devvp);
+    }
+    if (dev != NULL)
+        dev_rel(dev);
+
+    return (error);
 }
 
 /*
