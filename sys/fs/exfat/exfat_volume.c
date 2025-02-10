@@ -1078,7 +1078,7 @@ exfat_init_upcase(struct exfat_mount *emp)
         
         /* Get next cluster if we need more data */
         if (remaining > 0) {
-            error = exfat_next_cluster(emp, current_cluster, &current_cluster);
+            error = exfat_cluster_next(emp, current_cluster, &current_cluster);
             if (error) {
                 free(emp->upcase, M_EXFAT);
                 emp->upcase = NULL;
