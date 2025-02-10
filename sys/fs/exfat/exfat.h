@@ -96,7 +96,7 @@ struct exfat_mount {
     struct timespec last_error_time;  /* Time of last error */
     uint32_t free_clusters;    /* Cached count of free clusters */
     /* Node hash table */
-    LIST_HEAD(exfat_hashhead, exfat_node) *node_hash;
+    struct exfat_node_list *node_hash;
     u_long node_hash_mask;
     struct exfat_hash_mtx hash_mtx;
 };

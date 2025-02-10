@@ -32,7 +32,7 @@ struct exfat_mount;
 struct exfat_node {
     struct vnode *vnode;           /* Associated vnode */
     uint32_t cluster;             /* First cluster */
-    struct exfat_node *next;      /* Next in hash chain */
+    LIST_ENTRY(exfat_node) next;  /* Hash chain link */
     int type;                     /* Node type (file/directory) */
     struct mount *mp;             /* Mount point */
     struct {
@@ -44,7 +44,6 @@ struct exfat_node {
         struct timespec modify_time;    /* Last modification time */
         struct timespec access_time;    /* Last access time */
     } finfo;
-    LIST_ENTRY(exfat_node) hash;    /* Hash chain */
 };
 
 #define VTOE(vp)     ((struct exfat_node *)(vp)->v_data)
@@ -64,6 +63,9 @@ struct exfat_hash_entry {
 
 #define EXFAT_HASH_SIZE 64
 #define EXFAT_HASH_MASK (EXFAT_HASH_SIZE - 1)
+
+/* List head type for node hash table */
+LIST_HEAD(exfat_node_list, exfat_node);
 
 /* Function prototypes */
 int exfat_node_init(void);
