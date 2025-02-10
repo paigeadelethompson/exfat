@@ -1007,12 +1007,12 @@ exfat_init_upcase(struct exfat_mount *emp)
     uint32_t sector;
     int error;
 
-    if (bootverbose)
-        printf("exfat: initializing upcase table\n");
-
     /* Read first sector of root directory */
     sector = emp->boot.cluster_heap_offset +
              ((emp->root_cluster - 2) << emp->boot.sectors_per_cluster_shift);
+
+    if (bootverbose)
+        printf("exfat: initializing upcase table\n");
 
     error = bread(emp->devvp, sector, EXFAT_SECTOR_SIZE, NOCRED, &bp);
     if (error) {
@@ -1022,7 +1022,11 @@ exfat_init_upcase(struct exfat_mount *emp)
 
     /* Look for upcase table entry */
     entry = (struct exfat_entry_upcase *)bp->b_data;
-    while (entry->type != EXFAT_ENTRY_UPCASE && entry->type != EXFAT_ENTRY_EOD) {
+    while (entry->type != EXFAT_ENTRY_UPCASE) {
+        if (entry->type == EXFAT_ENTRY_EOD) {
+            brelse(bp);
+            return ENOENT;
+        }
         entry++;
         if ((uint8_t *)entry >= (uint8_t *)bp->b_data + EXFAT_SECTOR_SIZE) {
             brelse(bp);
@@ -1030,10 +1034,9 @@ exfat_init_upcase(struct exfat_mount *emp)
         }
     }
 
-    if (entry->type == EXFAT_ENTRY_EOD) {
-        brelse(bp);
-        return ENOENT;
-    }
+    if (bootverbose)
+        printf("exfat: found upcase table entry, first_cluster=%u, size=%ju\n",
+               le32toh(entry->first_cluster), (uintmax_t)le64toh(entry->data_length));
 
     /* Store upcase table information */
     emp->upcase_cluster = le32toh(entry->first_cluster);
@@ -1046,50 +1049,25 @@ exfat_init_upcase(struct exfat_mount *emp)
         return ENOMEM;
     }
 
-    /* Read upcase table data */
+    brelse(bp);
+
+    /* Now read the actual upcase table data */
     sector = emp->boot.cluster_heap_offset +
              ((emp->upcase_cluster - 2) << emp->boot.sectors_per_cluster_shift);
 
-    /* Read the upcase table cluster by cluster */
-    uint8_t *dest = (uint8_t *)emp->upcase;
-    size_t remaining = upcase_size;
-    uint32_t current_cluster = emp->upcase_cluster;
-    
-    while (remaining > 0) {
-        /* Read one cluster at a time */
-        size_t chunk_size = MIN(emp->bytes_per_cluster, remaining);
-        
-        /* Calculate sector for current cluster */
-        sector = emp->boot.cluster_heap_offset +
-                 ((current_cluster - 2) << emp->boot.sectors_per_cluster_shift);
-        
-        error = bread(emp->devvp, sector, chunk_size, NOCRED, &bp);
-        if (error) {
-            free(emp->upcase, M_EXFAT);
-            emp->upcase = NULL;
-            brelse(bp);
-            return error;
-        }
-        
-        memcpy(dest, bp->b_data, chunk_size);
-        brelse(bp);
-        
-        dest += chunk_size;
-        
-        /* Get next cluster if we need more data */
-        if (remaining > 0) {
-            error = exfat_cluster_next(emp, current_cluster, &current_cluster);
-            if (error) {
-                free(emp->upcase, M_EXFAT);
-                emp->upcase = NULL;
-                return error;
-            }
-        }
+    error = bread(emp->devvp, sector, upcase_size, NOCRED, &bp);
+    if (error) {
+        free(emp->upcase, M_EXFAT);
+        emp->upcase = NULL;
+        return error;
     }
 
+    /* Copy upcase table data */
+    memcpy(emp->upcase, bp->b_data, upcase_size);
+    brelse(bp);
+
     if (bootverbose)
-        printf("exfat: upcase table initialized (%ju bytes)\n", 
-               (uintmax_t)upcase_size);
+        printf("exfat: upcase table initialized (%ju bytes)\n", (uintmax_t)upcase_size);
 
     return 0;
 }
