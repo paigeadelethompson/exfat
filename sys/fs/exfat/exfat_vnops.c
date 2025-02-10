@@ -137,8 +137,9 @@ exfat_write_cluster(struct vnode *vp, struct exfat_mount *emp, uint32_t cluster,
              ((cluster - 2) << emp->boot.sectors_per_cluster_shift);
 
     /* Check if cluster is marked bad */
-    error = exfat_cluster_next(emp, cluster);
-    if (error == EXFAT_CLUSTER_BAD) {
+    uint32_t next_cluster;
+    error = exfat_cluster_next(emp, cluster, &next_cluster);
+    if (error == 0 && next_cluster == EXFAT_CLUSTER_BAD) {
         if (bootverbose)
             printf("exfat: attempt to write to bad cluster %u\n", cluster);
         return EIO;
@@ -983,6 +984,7 @@ exfat_strategy(struct vop_strategy_args *ap)
     struct exfat_node *ep = VTOE(vp);
     daddr_t sector;
     uint32_t cluster, offset;
+    int error;
 
     /* Calculate sector from file offset */
     cluster = ep->finfo.first_cluster;
