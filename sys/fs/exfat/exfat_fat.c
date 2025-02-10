@@ -280,7 +280,7 @@ exfat_cluster_extend(struct exfat_mount *emp, uint32_t *cluster)
  * Get next cluster in chain
  */
 int
-exfat_next_cluster(struct exfat_mount *emp, uint32_t current, uint32_t *next)
+exfat_cluster_next(struct exfat_mount *emp, uint32_t current, uint32_t *next)
 {
     uint32_t fat_entry;
     int error;
