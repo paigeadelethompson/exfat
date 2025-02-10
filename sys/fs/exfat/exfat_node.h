@@ -68,6 +68,7 @@ struct exfat_hash_entry {
 LIST_HEAD(exfat_node_list, exfat_node);
 
 /* Function prototypes */
+int exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp);
 int exfat_node_init(void);
 void exfat_node_uninit(void);
 int exfat_read_node_info(struct exfat_mount *emp, struct exfat_node *ep);
