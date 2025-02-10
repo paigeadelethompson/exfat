@@ -24,6 +24,7 @@
 #include <sys/bio.h>
 #include <sys/buf.h>
 #include <sys/malloc.h>
+#include <sys/fcntl.h>
 #include "exfat_node.h"
 #include "exfat.h"
 #include "exfat_fat.h"
@@ -321,9 +322,9 @@ exfat_getattr(struct vop_getattr_args *ap)
     vap->va_fileid = ep->cluster;
     vap->va_size = ep->finfo.file_size;
     vap->va_blocksize = emp->bytes_per_cluster;
-    vap->va_atime = ep->access_time;
-    vap->va_mtime = ep->modify_time;
-    vap->va_ctime = ep->create_time;
+    vap->va_atime = ep->finfo.access_time;
+    vap->va_mtime = ep->finfo.modify_time;
+    vap->va_ctime = ep->finfo.create_time;
     vap->va_gen = 1;
     vap->va_flags = 0;
     vap->va_rdev = 0;
@@ -333,7 +334,7 @@ exfat_getattr(struct vop_getattr_args *ap)
 
     /* Remove from hash table */
     mtx_lock(&emp->hash_mtx.mtx);
-    LIST_REMOVE(ep, hash);
+    LIST_REMOVE(ep, next);
     mtx_unlock(&emp->hash_mtx.mtx);
 
     return 0;
@@ -353,7 +354,7 @@ exfat_inactive(struct vop_inactive_args *ap)
         printf("exfat: deactivating vnode %p\n", vp);
 
     mtx_lock(&emp->hash_mtx.mtx);
-    LIST_REMOVE(ep, hash);
+    LIST_REMOVE(ep, next);
     mtx_unlock(&emp->hash_mtx.mtx);
 
     vp->v_data = NULL;
@@ -376,7 +377,7 @@ exfat_reclaim(struct vop_reclaim_args *ap)
         printf("exfat: reclaiming vnode %p\n", vp);
 
     mtx_lock(&emp->hash_mtx.mtx);
-    LIST_REMOVE(ep, hash);
+    LIST_REMOVE(ep, next);
     mtx_unlock(&emp->hash_mtx.mtx);
 
     /* Free resources */
@@ -486,8 +487,6 @@ exfat_write(struct vop_write_args *ap)
                 es.stream.valid_data_length = ep->finfo.file_size;
                 exfat_update_timestamps(&es.file, EXFAT_UTIME_MODIFY);
                 error = exfat_write_direntry(vp, &es, dir_offset);
-                if (error)
-                    goto out;
             }
         }
     }
