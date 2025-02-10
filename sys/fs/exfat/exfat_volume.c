@@ -1058,13 +1058,12 @@ exfat_init_upcase(struct exfat_mount *emp)
     /* Read the upcase table in chunks */
     uint8_t *dest = (uint8_t *)emp->upcase;
     size_t remaining = upcase_size;
-    uint32_t current_sector = sector;
 
     while (remaining > 0) {
-        /* Read in sector-aligned chunks */
-        size_t chunk_size = MIN(MAXBSIZE - (MAXBSIZE % EXFAT_SECTOR_SIZE), remaining);
+        /* Read one sector at a time */
+        size_t chunk_size = MIN(EXFAT_SECTOR_SIZE, remaining);
         
-        error = bread(emp->devvp, current_sector,
+        error = bread(emp->devvp, sector,
                      chunk_size, NOCRED, &bp);
         if (error) {
             free(emp->upcase, M_EXFAT);
@@ -1078,7 +1077,7 @@ exfat_init_upcase(struct exfat_mount *emp)
 
         dest += chunk_size;
         remaining -= chunk_size;
-        current_sector += chunk_size / EXFAT_SECTOR_SIZE;
+        sector++;
     }
 
     if (bootverbose)
