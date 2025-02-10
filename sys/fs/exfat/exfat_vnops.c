@@ -1171,4 +1171,58 @@ exfat_handle_error(struct exfat_mount *emp, struct vnode *vp, int error, int fla
     }
 
     return error;
+}
+
+int
+exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
+{
+    struct exfat_mount *emp = VFSTOEXFAT(mp);
+    struct exfat_node *ep;
+    struct vnode *vp;
+    int error;
+
+    /* Validate cluster number */
+    if (cluster < EXFAT_CLUSTER_FIRST || cluster >= emp->clusters_count + 2) {
+        printf("exfat: invalid cluster number %u\n", cluster);
+        return EINVAL;
+    }
+
+    /* Look up node in hash table */
+    ep = exfat_hash_lookup(emp, cluster);
+    if (ep) {
+        vp = ETOV(ep);
+        error = vget(vp, LK_EXCLUSIVE);
+        if (error == 0) {
+            *vpp = vp;
+            return 0;
+        }
+        return error;
+    }
+
+    /* Allocate new node */
+    ep = malloc(sizeof(struct exfat_node), M_EXFAT, M_WAITOK | M_ZERO);
+    if (ep == NULL)
+        return ENOMEM;
+
+    /* Initialize node */
+    ep->cluster = cluster;
+    ep->type = type;
+    ep->mp = mp;
+
+    /* Get new vnode */
+    error = getnewvnode("exfat", mp, &exfat_vnodeops, &vp);
+    if (error) {
+        free(ep, M_EXFAT);
+        return error;
+    }
+
+    /* Initialize vnode */
+    vp->v_data = ep;
+    ep->vnode = vp;
+
+    /* Add to hash table */
+    exfat_hash_insert(emp, ep);
+
+    *vpp = vp;
+    return 0;
 } 
