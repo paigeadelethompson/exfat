@@ -114,25 +114,32 @@ exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
 
     /* Initialize vnode */
     vp->v_data = ep;
+    vp->v_type = IFTOVT(type);  /* Convert type to vnode type */
     ep->vnode = vp;
 
-    /* Set vnode type based on node type */
-    switch (type) {
-    case EXFAT_TYPE_FILE:
-        vp->v_type = VREG;
-        break;
-    case EXFAT_TYPE_DIR:
-        vp->v_type = VDIR;
-        break;
-    default:
-        vp->v_type = VNON;
-        break;
+    /* Lock the vnode */
+    error = lockmgr(vp->v_vnlock, LK_EXCLUSIVE, NULL);
+    if (error) {
+        vput(vp);
+        free(ep, M_EXFAT);
+        return error;
+    }
+
+    /* Initialize the node info */
+    error = exfat_read_node_info(emp, ep);
+    if (error) {
+        vput(vp);
+        free(ep, M_EXFAT);
+        return error;
     }
 
     /* Add to hash table */
     mtx_lock(&emp->hash_mtx.mtx);
     exfat_hash_insert(emp, ep);
     mtx_unlock(&emp->hash_mtx.mtx);
+
+    VN_LOCK_ASHARE(vp);
+    VOP_UNLOCK(vp, 0);
 
     *vpp = vp;
     return 0;
