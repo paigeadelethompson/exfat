@@ -132,7 +132,7 @@ exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
     error = getnewvnode("exfat", mp, &exfat_vnodeops, &vp);
     if (error) {
         printf("exfat: [exfat_get_node] getnewvnode failed: %d\n", error);
-        free(ep, M_EXFAT);
+        free(ep, M_EXFAT);  /* Haven't attached node to vnode yet, safe to free */
         return error;
     }
 
@@ -140,8 +140,8 @@ exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
     error = vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
     if (error) {
         printf("exfat: [exfat_get_node] vn_lock failed: %d\n", error);
+        /* vput will trigger inactive which frees the node */
         vput(vp);
-        free(ep, M_EXFAT);
         return error;
     }
 
@@ -160,7 +160,6 @@ exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
     default:
         printf("exfat: [exfat_get_node] invalid node type %d\n", type);
         vput(vp);
-        free(ep, M_EXFAT);
         return EINVAL;
     }
 
@@ -171,8 +170,8 @@ exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
     error = exfat_read_node_info(emp, ep);
     if (error) {
         printf("exfat: [exfat_get_node] read_node_info failed: %d\n", error);
+        /* Just vput() - node will be freed in inactive routine */
         vput(vp);
-        free(ep, M_EXFAT);
         return error;
     }
 
@@ -203,20 +202,27 @@ exfat_read_node_info(struct exfat_mount *emp, struct exfat_node *ep)
     uint32_t sector;
     int error;
 
+    if (bootverbose)
+        printf("exfat: [exfat_read_node_info] reading info for cluster %u\n", ep->cluster);
+
     /* Calculate sector containing directory entry */
-    sector = emp->boot.cluster_heap_offset +
-             ((ep->cluster - 2) << emp->boot.sectors_per_cluster_shift);
+    sector = emp->boot.cluster_heap_offset + 
+             ((ep->cluster - EXFAT_CLUSTER_FIRST) * (1 << emp->boot.sectors_per_cluster_shift));
+
+    if (bootverbose)
+        printf("exfat: [exfat_read_node_info] reading sector %u\n", sector);
 
     /* Read sector containing directory entry */
     error = bread(emp->devvp, sector, EXFAT_SECTOR_SIZE, NOCRED, &bp);
     if (error) {
-        brelse(bp);
+        printf("exfat: [exfat_read_node_info] bread failed: %d\n", error);
         return error;
     }
 
     /* Parse file entry */
     file_entry = (struct exfat_entry_file *)bp->b_data;
     if (file_entry->type != EXFAT_ENTRY_FILE) {
+        printf("exfat: [exfat_read_node_info] invalid file entry type: %02x\n", file_entry->type);
         brelse(bp);
         return EINVAL;
     }
@@ -224,6 +230,7 @@ exfat_read_node_info(struct exfat_mount *emp, struct exfat_node *ep)
     /* Parse stream entry */
     stream_entry = (struct exfat_entry_stream *)(file_entry + 1);
     if (stream_entry->type != EXFAT_ENTRY_STREAM) {
+        printf("exfat: [exfat_read_node_info] invalid stream entry type: %02x\n", stream_entry->type);
         brelse(bp);
         return EINVAL;
     }
@@ -233,6 +240,9 @@ exfat_read_node_info(struct exfat_mount *emp, struct exfat_node *ep)
     ep->finfo.file_size = stream_entry->data_length;
     ep->finfo.valid_size = stream_entry->valid_data_length;
     ep->finfo.attributes = file_entry->file_attributes;
+
+    if (bootverbose)
+        printf("exfat: [exfat_read_node_info] node info read successfully\n");
 
     brelse(bp);
     return 0;
