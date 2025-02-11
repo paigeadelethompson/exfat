@@ -367,7 +367,6 @@ static int
 exfat_root(struct mount *mp, int flags, struct vnode **vpp)
 {
     struct exfat_mount *emp = VFSTOEXFAT(mp);
-    struct exfat_node *ep;
     int error;
 
     if (bootverbose)
