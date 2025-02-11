@@ -30,6 +30,10 @@
 #include "exfat_dir.h"
 #include "exfat_upcase.h"  /* For exfat_upcase() */
 
+/* Forward declarations */
+static int exfat_init_entry(struct exfat_mount *emp, uint32_t cluster, struct exfat_node *node);
+static int exfat_write_entry(struct exfat_mount *emp, struct exfat_node *node);
+
 /*
  * Initialize directory scanning
  */
@@ -240,38 +244,72 @@ exfat_calc_name_hash(struct exfat_mount *emp, const uint16_t *name, size_t len)
 }
 
 /*
+ * Initialize a directory entry
+ */
+static int
+exfat_init_entry(struct exfat_mount *emp, uint32_t cluster, struct exfat_node *node)
+{
+    /* Initialize basic node info */
+    node->cluster = cluster;
+    node->mp = emp->mp;
+    
+    return 0;
+}
+
+/*
+ * Write a directory entry to disk
+ */
+static int
+exfat_write_entry(struct exfat_mount *emp, struct exfat_node *node)
+{
+    struct buf *bp;
+    uint32_t sector;
+    int error;
+
+    /* Calculate sector number */
+    sector = emp->boot.cluster_heap_offset +
+             ((node->cluster - 2) << emp->boot.sectors_per_cluster_shift);
+
+    /* Read sector */
+    error = bread(emp->devvp, sector, EXFAT_SECTOR_SIZE, NOCRED, &bp);
+    if (error) {
+        brelse(bp);
+        return error;
+    }
+
+    /* Write entry data */
+    memcpy(bp->b_data, &node->finfo, sizeof(struct exfat_fileinfo));
+    
+    error = bwrite(bp);
+    return error;
+}
+
+/*
  * Create directory entry
  */
 int
-exfat_create_direntry(struct exfat_mount *emp, uint32_t cluster, struct exfat_entry_file *file,
-                      struct exfat_entry_stream *stream, struct exfat_entry_name *name,
-                      size_t name_count)
+exfat_create_direntry(struct exfat_mount *emp, uint32_t cluster, 
+                     struct exfat_entry_file *file,
+                     struct exfat_entry_stream *stream, 
+                     struct exfat_entry_name *name,
+                     size_t name_count)
 {
-    if (bootverbose)
-        printf("exfat: [%s] creating directory entry at cluster %u\n", __func__, cluster);
-
     struct exfat_node *ep = VTOE(emp->devvp);
     int error;
 
     /* Initialize new entry */
-    error = exfat_init_entry(emp, cluster, &ep->finfo);
+    error = exfat_init_entry(emp, cluster, ep);
     if (error)
         return error;
 
-    /* Set entry type */
-    ep->finfo.type = EXFAT_ENTRY_FILE;
-
-    /* Set file entry */
-    memcpy(&ep->finfo.file, file, sizeof(struct exfat_entry_file));
-
-    /* Set stream entry */
-    memcpy(&ep->finfo.stream, stream, sizeof(struct exfat_entry_stream));
-
-    /* Set name entries */
-    memcpy(ep->finfo.name, name, name_count * sizeof(struct exfat_entry_name));
+    /* Set entry data */
+    ep->type = EXFAT_ENTRY_FILE;
+    memcpy(&ep->finfo, file, sizeof(struct exfat_entry_file));
+    memcpy(&ep->stream, stream, sizeof(struct exfat_entry_stream));
+    memcpy(&ep->name, name, name_count * sizeof(struct exfat_entry_name));
 
     /* Write entry to disk */
-    error = exfat_write_entry(emp, &ep->finfo);
+    error = exfat_write_entry(emp, ep);
     if (error)
         return error;
 
@@ -284,22 +322,19 @@ exfat_create_direntry(struct exfat_mount *emp, uint32_t cluster, struct exfat_en
 int
 exfat_remove_direntry(struct exfat_mount *emp, uint32_t cluster)
 {
-    if (bootverbose)
-        printf("exfat: [%s] removing directory entry at cluster %u\n", __func__, cluster);
-
     struct exfat_node *ep = VTOE(emp->devvp);
     int error;
 
     /* Initialize entry */
-    error = exfat_init_entry(emp, cluster, &ep->finfo);
+    error = exfat_init_entry(emp, cluster, ep);
     if (error)
         return error;
 
-    /* Set entry type */
-    ep->finfo.type = EXFAT_ENTRY_DELETED;
+    /* Set entry type to deleted */
+    ep->type = EXFAT_ENTRY_DELETED;
 
     /* Write entry to disk */
-    error = exfat_write_entry(emp, &ep->finfo);
+    error = exfat_write_entry(emp, ep);
     if (error)
         return error;
 
