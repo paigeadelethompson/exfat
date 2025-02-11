@@ -86,6 +86,24 @@ exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
     if (bootverbose)
         printf("exfat: getting node for cluster %u\n", cluster);
 
+    /* Validate mount structure */
+    if (emp == NULL) {
+        printf("exfat: null mount structure\n");
+        return EINVAL;
+    }
+
+    if (bootverbose)
+        printf("exfat: checking hash table at %p\n", emp->node_hash);
+
+    /* Validate hash table */
+    if (emp->node_hash == NULL) {
+        printf("exfat: hash table not initialized\n");
+        return EINVAL;
+    }
+
+    if (bootverbose)
+        printf("exfat: checking mutex at %p\n", &emp->hash_mtx.mtx);
+
     /* Validate cluster number */
     if (cluster < EXFAT_CLUSTER_FIRST || cluster >= emp->clusters_count + 2) {
         printf("exfat: invalid cluster number %u\n", cluster);
@@ -93,7 +111,14 @@ exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
     }
 
     /* Check hash table first */
+    if (bootverbose)
+        printf("exfat: acquiring mutex\n");
+
     mtx_lock(&emp->hash_mtx.mtx);
+
+    if (bootverbose)
+        printf("exfat: mutex acquired, looking up cluster\n");
+
     ep = exfat_hash_lookup(emp, cluster);
     if (ep) {
         vp = ETOV(ep);
@@ -219,16 +244,27 @@ exfat_init_nodes(struct exfat_mount *emp)
     if (bootverbose)
         printf("exfat: initializing node hash table\n");
 
+    /* Validate mount structure */
+    if (emp == NULL) {
+        printf("exfat: null mount structure in init_nodes\n");
+        return EINVAL;
+    }
+
     /* Allocate hash table */
     emp->node_hash = hashinit(EXFAT_HASH_SIZE, M_EXFAT, &emp->node_hash_mask);
     if (emp->node_hash == NULL)
         return ENOMEM;
 
+    if (bootverbose)
+        printf("exfat: initializing mutex at %p\n", &emp->hash_mtx.mtx);
+
     /* Initialize mutex */
     mtx_init(&emp->hash_mtx.mtx, "exfat_node_hash", NULL, MTX_DEF);
 
     if (bootverbose)
-        printf("exfat: node hash table initialized\n");
+        printf("exfat: node hash table initialized at %p, mutex at %p\n",
+               emp->node_hash, &emp->hash_mtx.mtx);
+
     return 0;
 }
 
