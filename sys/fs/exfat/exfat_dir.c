@@ -40,106 +40,101 @@ static int exfat_write_entry(struct exfat_mount *emp, struct exfat_node *node);
 int
 exfat_scan_directory(struct vnode *vp, struct exfat_scan_ctx *ctx)
 {
-    if (bootverbose)
-        printf("exfat: [exfat_scan_directory] scanning directory vnode %p\n", vp);
+    struct exfat_mount *emp;
+    struct exfat_node *ep;
+    struct buf *bp = NULL;
+    uint32_t sector;
+    int error = 0;
 
-    struct exfat_mount *emp = VTOVFSMP(vp);
-    struct exfat_node *ep = VTOE(vp);
-    int error;
-
-    /* Validate input parameters */
+    /* Basic parameter validation */
     if (vp == NULL || ctx == NULL) {
         printf("exfat: [exfat_scan_directory] NULL parameters\n");
         return EINVAL;
     }
 
-    /* Validate mount and node */
-    if (emp == NULL || ep == NULL) {
-        printf("exfat: [exfat_scan_directory] NULL mount or node\n");
+    /* Get mount and node */
+    emp = VFSTOEXFAT(vp->v_mount);
+    if (emp == NULL) {
+        printf("exfat: [exfat_scan_directory] NULL mount structure\n");
         return EINVAL;
     }
 
-    /* Special handling for root directory during mount */
-    if (ep->cluster == 0 && emp->root_cluster != 0) {
-        ep->cluster = emp->root_cluster;
-    }
-
-    /* Validate cluster number */
-    if (ep->cluster < EXFAT_CLUSTER_FIRST || ep->cluster >= emp->clusters_count + 2) {
-        printf("exfat: [exfat_scan_directory] invalid cluster number %u\n", ep->cluster);
+    ep = VTOE(vp);
+    if (ep == NULL) {
+        printf("exfat: [exfat_scan_directory] NULL node\n");
         return EINVAL;
     }
 
-    /* Validate mount parameters */
-    if (emp->boot.cluster_heap_offset == 0 || 
-        emp->boot.sectors_per_cluster_shift == 0) {
-        printf("exfat: [exfat_scan_directory] invalid mount parameters\n");
-        printf("  cluster_heap_offset: %u\n", emp->boot.cluster_heap_offset);
-        printf("  sectors_per_cluster_shift: %u\n", emp->boot.sectors_per_cluster_shift);
-        return EINVAL;
+    if (bootverbose) {
+        printf("exfat: [exfat_scan_directory] scanning directory:\n");
+        printf("  vnode: %p\n", vp);
+        printf("  mount: %p\n", emp);
+        printf("  node: %p\n", ep);
+        printf("  cluster: %u\n", ep->cluster);
     }
-
-    if (bootverbose)
-        printf("exfat: [exfat_scan_directory] reading cluster %u\n", ep->cluster);
 
     /* Initialize scan context */
     ctx->emp = emp;
     ctx->cluster = ep->cluster;
     ctx->offset = 0;
     ctx->bp = NULL;
+    ctx->entry = NULL;
 
-    if (bootverbose) {
-        printf("exfat: [exfat_scan_directory] calculating sector:\n");
-        printf("  cluster_heap_offset: %u\n", emp->boot.cluster_heap_offset);
-        printf("  cluster: %u\n", ctx->cluster);
-        printf("  sectors_per_cluster_shift: %u\n", emp->boot.sectors_per_cluster_shift);
+    /* Validate cluster number */
+    if (ctx->cluster < EXFAT_CLUSTER_FIRST || 
+        ctx->cluster >= emp->clusters_count + 2) {
+        printf("exfat: [exfat_scan_directory] invalid cluster %u\n", ctx->cluster);
+        return EINVAL;
     }
 
-    /* Calculate sector number */
-    uint32_t sector = emp->boot.cluster_heap_offset +
-                     ((ctx->cluster - 2) << emp->boot.sectors_per_cluster_shift);
+    /* Calculate first sector of cluster */
+    sector = emp->boot.cluster_heap_offset + 
+            ((ctx->cluster - 2) << emp->boot.sectors_per_cluster_shift);
 
-    if (bootverbose)
-        printf("exfat: [exfat_scan_directory] calculated sector %u = %u + ((%u - 2) << %u)\n",
-               sector, emp->boot.cluster_heap_offset, ctx->cluster,
-               emp->boot.sectors_per_cluster_shift);
+    if (bootverbose) {
+        printf("exfat: [exfat_scan_directory] reading first sector:\n");
+        printf("  cluster_heap_offset: %u\n", emp->boot.cluster_heap_offset);
+        printf("  sectors_per_cluster_shift: %u\n", emp->boot.sectors_per_cluster_shift);
+        printf("  calculated sector: %u\n", sector);
+    }
 
     /* Validate sector number */
     if (sector >= emp->boot.volume_length) {
-        printf("exfat: [exfat_scan_directory] invalid sector number %u (volume length %lu)\n",
+        printf("exfat: [exfat_scan_directory] sector %u beyond volume length %lu\n",
                sector, emp->boot.volume_length);
         return EINVAL;
     }
 
-    /* Validate device vnode */
-    if (emp->devvp == NULL) {
-        printf("exfat: [exfat_scan_directory] null device vnode\n");
-        return EINVAL;
-    }
-
     /* Read first sector */
-    error = bread(emp->devvp, sector, EXFAT_SECTOR_SIZE, NOCRED, &ctx->bp);
-    if (error) {
+    error = bread(emp->devvp, sector, EXFAT_SECTOR_SIZE, NOCRED, &bp);
+    if (error || bp == NULL) {
         printf("exfat: [exfat_scan_directory] bread failed: %d\n", error);
-        if (ctx->bp != NULL) {
-            brelse(ctx->bp);
-            ctx->bp = NULL;
-        }
-        return error;
+        goto out;
     }
 
-    /* Validate buffer */
-    if (ctx->bp->b_data == NULL) {
-        printf("exfat: [exfat_scan_directory] null buffer data\n");
-        brelse(ctx->bp);
-        ctx->bp = NULL;
-        return EINVAL;
+    /* Validate buffer data */
+    if (bp->b_data == NULL) {
+        printf("exfat: [exfat_scan_directory] NULL buffer data\n");
+        error = EINVAL;
+        goto out;
     }
 
-    ctx->entry = (uint8_t *)ctx->bp->b_data;
+    /* Set up scan context */
+    ctx->bp = bp;
+    ctx->entry = (uint8_t *)bp->b_data;
+
     if (bootverbose)
-        printf("exfat: [exfat_scan_directory] directory scan initialized\n");
+        printf("exfat: [exfat_scan_directory] scan initialized successfully\n");
+
     return 0;
+
+out:
+    if (bp != NULL) {
+        brelse(bp);
+    }
+    ctx->bp = NULL;
+    ctx->entry = NULL;
+    return error;
 }
 
 /*
