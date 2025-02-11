@@ -366,24 +366,36 @@ exfat_unmount(struct mount *mp, int mntflags)
 static int
 exfat_root(struct mount *mp, int flags, struct vnode **vpp)
 {
-    if (bootverbose)
-        printf("exfat: [exfat_root] getting root vnode\n");
-    struct exfat_mount *emp;
-    struct vnode *vp;
+    struct exfat_mount *emp = VFSTOEXFAT(mp);
     int error;
 
-    emp = VFSTOEXFAT(mp);
+    if (bootverbose)
+        printf("exfat: [exfat_root] getting root vnode\n");
 
-    error = exfat_get_node(mp, emp->root_cluster, VDIR, &vp);
+    error = exfat_get_node(mp, emp->root_cluster, EXFAT_TYPE_DIR, vpp);
     if (error) {
-        if (bootverbose)
-            printf("exfat: [exfat_root] failed to get root node: %d\n", error);
         return error;
     }
 
-    *vpp = vp;
+    /* We need to initialize the root vnode for directory operations */
+    error = VOP_LOCK(*vpp, LK_EXCLUSIVE);
+    if (error)
+        return error;
+
+    /* Initialize root directory node */
+    struct exfat_node *ep = VTOE(*vpp);
+    ep->finfo.attributes = EXFAT_ATTR_DIRECTORY;
+    ep->finfo.first_cluster = emp->root_cluster;
+    
+    /* Root directory size is special - set to one cluster for now */
+    ep->finfo.file_size = emp->bytes_per_cluster;
+    ep->finfo.valid_size = ep->finfo.file_size;
+
+    VOP_UNLOCK(*vpp);
+
     if (bootverbose)
-        printf("exfat: [exfat_root] root vnode obtained\n");
+        printf("exfat: [exfat_root] root vnode initialized\n");
+
     return 0;
 }
 
