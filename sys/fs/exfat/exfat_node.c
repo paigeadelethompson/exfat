@@ -36,14 +36,20 @@
 static enum vtype
 exfat_type_to_vtype(int type)
 {
+    enum vtype vt;
+
     switch (type) {
     case EXFAT_TYPE_FILE:
-        return VREG;
+        vt = VREG;
+        break;
     case EXFAT_TYPE_DIR:
-        return VDIR;
+        vt = VDIR;
+        break;
     default:
-        return VNON;
+        vt = VNON;
+        break;
     }
+    return vt;
 }
 
 /*
