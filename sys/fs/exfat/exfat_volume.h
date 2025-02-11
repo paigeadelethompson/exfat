@@ -56,4 +56,13 @@ int exfat_update_percent_in_use(struct exfat_mount *emp);
 int exfat_verify_sector(struct buf *bp);
 void exfat_update_sector_checksum(struct buf *bp);
 
+/* Volume operations */
+int exfat_read_boot_sector(struct exfat_mount *emp);
+int exfat_read_volume_label(struct exfat_mount *emp);
+int exfat_write_volume_label(struct exfat_mount *emp, const char *label, size_t len);
+int exfat_read_rootdir(struct exfat_mount *emp);
+
+/* Mount-time directory scanning without vnode requirement */
+int exfat_scan_directory_raw(struct exfat_mount *emp, uint32_t cluster, struct exfat_scan_ctx *ctx);
+
 #endif /* _FS_EXFAT_VOLUME_H_ */ 
