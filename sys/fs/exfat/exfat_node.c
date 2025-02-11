@@ -90,6 +90,11 @@ exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
     if (ep == NULL)
         return ENOMEM;
 
+    /* Initialize node before getting vnode */
+    ep->cluster = cluster;
+    ep->type = type;
+    ep->mp = mp;
+
     /* Get new vnode */
     error = getnewvnode("exfat", mp, &exfat_vnodeops, &vp);
     if (error) {
@@ -97,12 +102,12 @@ exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
         return error;
     }
 
-    /* Initialize node */
-    ep->cluster = cluster;
-    ep->type = type;
-    ep->mp = mp;
     vp->v_data = ep;
     ep->vnode = vp;
+
+    /* Initialize vnode */
+    vp->v_type = IFTOVT(type);  /* Set vnode type based on node type */
+    vp->v_op = &exfat_vnodeops;
 
     /* Read file/directory information */
     error = exfat_read_node_info(emp, ep);
