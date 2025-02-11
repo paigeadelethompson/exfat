@@ -81,11 +81,6 @@ static const char *exfat_opts[] = {
     NULL
 };
 
-/* Track number of mounted filesystems */
-static volatile u_int exfat_mount_count = 0;
-static struct mtx exfat_mount_lock;
-MTX_SYSINIT(exfat_mount_lock, &exfat_mount_lock, "exfat_mount", MTX_DEF);
-
 /* Update the mount implementation to read the boot sector: */
 static int
 exfat_mount(struct mount *mp)
