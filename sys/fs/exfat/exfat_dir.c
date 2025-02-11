@@ -435,4 +435,72 @@ exfat_remove_direntry(struct exfat_mount *emp, uint32_t cluster)
         return error;
 
     return 0;
+}
+
+/*
+ * Scan directory during mount (doesn't require a vnode)
+ */
+int
+exfat_scan_directory_mount(struct exfat_mount *emp, uint32_t cluster, struct exfat_scan_ctx *ctx)
+{
+    struct buf *bp = NULL;
+    uint32_t sector;
+    int error = 0;
+
+    if (bootverbose)
+        printf("exfat: [exfat_scan_directory_mount] scanning cluster %u\n", cluster);
+
+    /* Initialize scan context */
+    ctx->emp = emp;
+    ctx->cluster = cluster;
+    ctx->offset = 0;
+    ctx->bp = NULL;
+    ctx->entry = NULL;
+
+    /* Calculate first sector of cluster */
+    sector = emp->boot.cluster_heap_offset + 
+            ((cluster - 2) << emp->boot.sectors_per_cluster_shift);
+
+    if (bootverbose)
+        printf("exfat: [exfat_scan_directory_mount] reading sector %u\n", sector);
+
+    /* Read first sector */
+    error = bread(emp->devvp, sector, EXFAT_SECTOR_SIZE, NOCRED, &bp);
+    if (error || bp == NULL) {
+        printf("exfat: [exfat_scan_directory_mount] bread failed: %d\n", error);
+        goto out;
+    }
+
+    /* Set up scan context */
+    ctx->bp = bp;
+    ctx->entry = (uint8_t *)bp->b_data;
+
+    return 0;
+
+out:
+    if (bp != NULL)
+        brelse(bp);
+    return error;
+}
+
+int
+exfat_read_rootdir(struct exfat_mount *emp)
+{
+    struct exfat_scan_ctx ctx;
+    int error;
+
+    if (bootverbose) {
+        printf("exfat: [exfat_read_rootdir] reading root directory:\n");
+        printf("  cluster_heap_offset: %u\n", emp->boot.cluster_heap_offset);
+        printf("  root_cluster: %u\n", emp->root_cluster);
+        printf("  sectors_per_cluster_shift: %u\n", emp->boot.sectors_per_cluster_shift);
+    }
+
+    error = exfat_scan_directory_mount(emp, emp->root_cluster, &ctx);
+    if (error) {
+        printf("exfat: [exfat_read_rootdir] failed to initialize bitmap: %d\n", error);
+        return error;
+    }
+
+    return 0;
 } 
