@@ -30,7 +30,6 @@
 struct exfat_node;
 struct vnode;
 struct mount;
-enum vtype;  /* Forward declaration of vtype enum */
 
 /* ExFAT filesystem constants */
 #define EXFAT_SECTOR_SIZE       512
