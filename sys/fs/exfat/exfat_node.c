@@ -251,11 +251,22 @@ exfat_read_node_info(struct exfat_mount *emp, struct exfat_node *ep)
 void
 exfat_node_put(struct exfat_node *ep)
 {
-    struct mount *mp = ETOV(ep)->v_mount;
-    struct exfat_mount *emp = VFSTOEXFAT(mp);
+    struct mount *mp = ep->mp;  /* Use cached mount pointer from node */
+    struct exfat_mount *emp;
 
     if (bootverbose)
         printf("exfat: [exfat_node_put] releasing node at cluster %u\n", ep->cluster);
+
+    if (mp == NULL) {
+        printf("exfat: [exfat_node_put] null mount pointer\n");
+        return;
+    }
+
+    emp = VFSTOEXFAT(mp);
+    if (emp == NULL) {
+        printf("exfat: [exfat_node_put] null exfat mount\n");
+        return;
+    }
 
     mtx_lock(&emp->hash_mtx.mtx);
     LIST_REMOVE(ep, next);
