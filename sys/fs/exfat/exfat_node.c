@@ -99,6 +99,12 @@ exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
     ep->type = type;
     ep->mp = mp;
 
+    /* Validate cluster number */
+    if (cluster < EXFAT_CLUSTER_FIRST || cluster >= emp->clusters_count + 2) {
+        free(ep, M_EXFAT);
+        return EINVAL;
+    }
+
     /* Get new vnode */
     error = getnewvnode("exfat", mp, &exfat_vnodeops, &vp);
     if (error) {
