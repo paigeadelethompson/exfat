@@ -59,8 +59,22 @@ exfat_scan_directory(struct vnode *vp, struct exfat_scan_ctx *ctx)
         return EINVAL;
     }
 
+    /* Special handling for root directory during mount */
+    if (ep->cluster == 0 && emp->root_cluster != 0) {
+        ep->cluster = emp->root_cluster;
+    } else {
+        printf("exfat: [exfat_scan_directory] invalid root cluster or cluster number: 0\n");
+        return EINVAL;
+    }
+
+    /* Validate cluster number */
+    if (ep->cluster < EXFAT_CLUSTER_FIRST || ep->cluster >= emp->clusters_count + 2) {
+        printf("exfat: [exfat_scan_directory] invalid cluster number %u\n", ep->cluster);
+        return EINVAL;
+    }
+
     if (bootverbose)
-        printf("exfat: [exfat_scan_directory] first cluster: %u\n", ep->finfo.first_cluster);
+        printf("exfat: [exfat_scan_directory] reading cluster %u\n", ep->cluster);
 
     /* Initialize scan context */
     ctx->emp = emp;
@@ -70,19 +84,34 @@ exfat_scan_directory(struct vnode *vp, struct exfat_scan_ctx *ctx)
 
     /* Calculate sector number */
     uint32_t sector = emp->boot.cluster_heap_offset +
-                      ((ctx->cluster - 2) << emp->boot.sectors_per_cluster_shift);
+                     ((ctx->cluster - 2) << emp->boot.sectors_per_cluster_shift);
 
     if (bootverbose)
         printf("exfat: [exfat_scan_directory] reading sector %u\n", sector);
 
-    /* Read first cluster */
+    /* Validate sector number */
+    if (sector >= emp->boot.volume_length) {
+        printf("exfat: [exfat_scan_directory] invalid sector number %u\n", sector);
+        return EINVAL;
+    }
+
+    /* Read first sector */
     error = bread(emp->devvp, sector, EXFAT_SECTOR_SIZE, NOCRED, &ctx->bp);
     if (error) {
-        if (bootverbose)
-            printf("exfat: [exfat_scan_directory] failed to read directory cluster: %d\n", error);
+        printf("exfat: [exfat_scan_directory] bread failed: %d\n", error);
+        if (ctx->bp != NULL) {
+            brelse(ctx->bp);
+            ctx->bp = NULL;
+        }
+        return error;
+    }
+
+    /* Validate buffer */
+    if (ctx->bp->b_data == NULL) {
+        printf("exfat: [exfat_scan_directory] null buffer data\n");
         brelse(ctx->bp);
         ctx->bp = NULL;
-        return error;
+        return EINVAL;
     }
 
     ctx->entry = (uint8_t *)ctx->bp->b_data;
