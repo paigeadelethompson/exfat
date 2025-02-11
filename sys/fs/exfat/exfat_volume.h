@@ -57,7 +57,6 @@ int exfat_verify_sector(struct buf *bp);
 void exfat_update_sector_checksum(struct buf *bp);
 
 /* Volume operations */
-int exfat_read_boot_sector(struct exfat_mount *emp);
 int exfat_read_volume_label(struct exfat_mount *emp);
 int exfat_write_volume_label(struct exfat_mount *emp, const char *label, size_t len);
 int exfat_read_rootdir(struct exfat_mount *emp);
