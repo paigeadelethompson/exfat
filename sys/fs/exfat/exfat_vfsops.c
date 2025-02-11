@@ -414,7 +414,7 @@ exfat_root(struct mount *mp, int flags, struct vnode **vpp)
     if (bootverbose)
         printf("exfat: [exfat_root] root node initialized at cluster %u\n", emp->root_cluster);
 
-    VOP_UNLOCK(vp);
+    vn_unlock(vp);
     *vpp = vp;
 
     if (bootverbose)
