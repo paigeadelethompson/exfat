@@ -58,7 +58,7 @@ exfat_read_cluster(struct vnode *vp, struct exfat_mount *emp, uint32_t cluster, 
     if (error) {
         /* Cluster is bad - try to recover data */
         if (bootverbose)
-            printf("exfat: attempting to recover data from bad cluster %u\n", cluster);
+            printf("exfat: [exfat_read_cluster] attempting to recover data from bad cluster %u\n", cluster);
         
         /* Read sector by sector */
         for (int i = 0; i < (1 << emp->boot.sectors_per_cluster_shift); i++) {
@@ -89,7 +89,7 @@ exfat_read_cluster(struct vnode *vp, struct exfat_mount *emp, uint32_t cluster, 
     error = bread(emp->devvp, sector, emp->bytes_per_cluster, NOCRED, &bp);
     if (error) {
         if (bootverbose)
-            printf("exfat: cluster read failed: %d\n", error);
+            printf("exfat: [exfat_read_cluster] cluster read failed: %d\n", error);
         /* Handle bad sector */
         exfat_handle_bad_sector(emp, sector);
         error = exfat_handle_error(emp, vp, error,
@@ -102,7 +102,7 @@ exfat_read_cluster(struct vnode *vp, struct exfat_mount *emp, uint32_t cluster, 
     for (int i = 0; i < (1 << emp->boot.sectors_per_cluster_shift); i++) {
         if (exfat_verify_sector(bp + (i * EXFAT_SECTOR_SIZE))) {
             if (bootverbose)
-                printf("exfat: bad checksum in sector %jd\n",
+                printf("exfat: [exfat_read_cluster] bad checksum in sector %jd\n",
                        (intmax_t)(sector + i));
             exfat_handle_bad_sector(emp, sector + i);
             error = exfat_handle_error(emp, vp, EIO,
@@ -138,7 +138,7 @@ exfat_write_cluster(struct vnode *vp, struct exfat_mount *emp, uint32_t cluster,
     error = exfat_cluster_next(emp, cluster, &next_cluster);
     if (error == 0 && next_cluster == EXFAT_CLUSTER_BAD) {
         if (bootverbose)
-            printf("exfat: attempt to write to bad cluster %u\n", cluster);
+            printf("exfat: [exfat_write_cluster] attempt to write to bad cluster %u\n", cluster);
         return EIO;
     }
 
@@ -166,7 +166,7 @@ exfat_write_cluster(struct vnode *vp, struct exfat_mount *emp, uint32_t cluster,
     error = bread(emp->devvp, sector, emp->bytes_per_cluster, NOCRED, &bp);
     if (error) {
         if (bootverbose)
-            printf("exfat: cluster write failed: %d\n", error);
+            printf("exfat: [exfat_write_cluster] cluster write failed: %d\n", error);
         /* Handle bad sector */
         exfat_handle_bad_sector(emp, sector);
         error = exfat_handle_error(emp, vp, error,
@@ -184,7 +184,7 @@ exfat_write_cluster(struct vnode *vp, struct exfat_mount *emp, uint32_t cluster,
     error = bwrite(bp);
     if (error) {
         if (bootverbose)
-            printf("exfat: cluster write failed: %d\n", error);
+            printf("exfat: [exfat_write_cluster] cluster write failed: %d\n", error);
         /* Handle bad sector */
         exfat_handle_bad_sector(emp, sector);
         error = exfat_handle_error(emp, vp, error,
@@ -216,7 +216,7 @@ exfat_read(struct vop_read_args *ap)
     /* Check if we're trying to read past EOF */
     if (uio->uio_offset >= ep->finfo.file_size) {
         if (bootverbose)
-            printf("exfat: read beyond EOF (offset %jd, size %jd)\n",
+            printf("exfat: [exfat_read] read beyond EOF (offset %jd, size %jd)\n",
                    (intmax_t)uio->uio_offset, (intmax_t)ep->finfo.file_size);
         return 0;
     }
@@ -394,7 +394,7 @@ static int
 exfat_readdir(struct vop_readdir_args *ap)
 {
     if (bootverbose)
-        printf("exfat: reading directory entries from vnode %p\n", ap->a_vp);
+        printf("exfat: [exfat_readdir] reading directory entries from vnode %p\n", ap->a_vp);
 
     /* For now, return empty directory */
     return 0;
