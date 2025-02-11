@@ -1161,64 +1161,27 @@ exfat_init_upcase(struct exfat_mount *emp)
     return 0;
 }
 
-int 
+int
 exfat_read_rootdir(struct exfat_mount *emp)
 {
-    struct buf *bp;
-    uint32_t sector;
     struct exfat_scan_ctx ctx;
     int error;
-
-    if (bootverbose)
-        printf("exfat: [exfat_read_rootdir] reading root directory\n");
-
-    /* Read first sector of root directory */
-    sector = emp->boot.cluster_heap_offset +
-             ((emp->root_cluster - 2) << emp->boot.sectors_per_cluster_shift);
 
     if (bootverbose) {
         printf("exfat: [exfat_read_rootdir] reading root directory:\n");
         printf("  cluster_heap_offset: %u\n", emp->boot.cluster_heap_offset);
         printf("  root_cluster: %u\n", emp->root_cluster);
         printf("  sectors_per_cluster_shift: %u\n", emp->boot.sectors_per_cluster_shift);
-        printf("  calculated sector: %u\n", sector);
     }
 
-    error = bread(emp->devvp, sector, EXFAT_SECTOR_SIZE, NOCRED, &bp);
+    error = exfat_scan_directory_raw(emp, emp->root_cluster, &ctx);
     if (error) {
-        if (bootverbose)
-            printf("exfat: [exfat_read_rootdir] failed to read root directory sector %u: %d\n",
-                   sector, error);
+        printf("exfat: [exfat_read_rootdir] failed to scan root directory: %d\n", error);
         return error;
     }
 
-    /* Initialize scan context */
-    ctx.emp = emp;
-    ctx.cluster = emp->root_cluster;
-    ctx.offset = 0;
-    ctx.bp = bp;
-    ctx.entry = (uint8_t *)bp->b_data;
+    /* Process root directory entries here */
 
-    /* Dump first 32 bytes of root directory */
-    if (bootverbose) {
-        printf("exfat: [exfat_read_rootdir] first directory entry:\n");
-        printf("  type: 0x%02x\n", ctx.entry[0]);
-        printf("  data:");
-        for (int i = 0; i < 32; i++) {
-            if (i % 16 == 0) printf("\n   ");
-            printf(" %02x", ctx.entry[i]);
-        }
-        printf("\n");
-    }
-
-    /* Scan for bitmap entry */
-    error = exfat_scan_directory(emp->devvp, &ctx);
-    if (bootverbose && error) {
-        printf("exfat: [exfat_read_rootdir] failed to initialize bitmap: %d\n", error);
-        brelse(bp);
-        return error;
-    }
-
-    brelse(bp);
+    exfat_scan_cleanup(&ctx);
     return 0;
 } 
