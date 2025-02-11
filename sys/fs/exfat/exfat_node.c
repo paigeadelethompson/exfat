@@ -149,8 +149,8 @@ exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
     vp->v_data = ep;
     ep->vnode = vp;
 
-    /* Initialize the vnode */
-    vn_finished_write(mp);
+    /* Initialize the vnode - start/finish write pair */
+    vn_start_write(mp, V_WAIT);
     
     /* Set vnode type */
     switch (type) {
@@ -162,7 +162,8 @@ exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
         break;
     default:
         printf("exfat: [exfat_get_node] invalid node type %d\n", type);
-        vrele(vp);  /* Don't trigger inactive yet */
+        vn_finished_write(mp);
+        vrele(vp);
         free(ep, M_EXFAT);
         return EINVAL;
     }
@@ -174,6 +175,7 @@ exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
     error = exfat_read_node_info(emp, ep);
     if (error) {
         printf("exfat: [exfat_get_node] read_node_info failed: %d\n", error);
+        vn_finished_write(mp);
         vrele(vp);
         free(ep, M_EXFAT);
         return error;
@@ -187,6 +189,7 @@ exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
     if (bootverbose)
         printf("exfat: [exfat_get_node] node created and initialized\n");
 
+    vn_finished_write(mp);
     VOP_UNLOCK(vp);
 
     *vpp = vp;
