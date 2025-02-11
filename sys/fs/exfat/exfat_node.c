@@ -150,7 +150,14 @@ exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
     ep->vnode = vp;
 
     /* Initialize the vnode - start/finish write pair */
-    vn_start_write(mp, V_WAIT);
+    struct mount *mpp = mp;
+    error = vn_start_write(NULL, &mpp, V_WAIT);
+    if (error) {
+        printf("exfat: [exfat_get_node] vn_start_write failed: %d\n", error);
+        vrele(vp);
+        free(ep, M_EXFAT);
+        return error;
+    }
     
     /* Set vnode type */
     switch (type) {
