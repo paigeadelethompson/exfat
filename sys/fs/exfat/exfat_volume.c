@@ -564,7 +564,7 @@ exfat_update_volume_flags(struct exfat_mount *emp, uint16_t flags)
     emp->boot.volume_flags = flags;
 
     if (bootverbose)
-        printf("exfat: [%s] updating volume flags: 0x%04x\n", __func__, flags);
+        printf("exfat: [exfat_update_volume_flags] updating volume flags: 0x%04x\n", flags);
 
     return 0;
 }
@@ -781,7 +781,7 @@ exfat_update_volume_time(struct exfat_mount *emp)
     error = bwrite(bp);
 
     if (bootverbose)
-        printf("exfat: [%s] updating volume time\n", __func__);
+        printf("exfat: [exfat_update_volume_time] updating volume time\n");
 
     return error;
 }
@@ -1026,7 +1026,7 @@ exfat_scan_cluster(struct exfat_mount *emp, uint32_t cluster)
     }
 
     if (bootverbose)
-        printf("exfat: [%s] scanning cluster %u\n", __func__, cluster);
+        printf("exfat: [exfat_scan_cluster] scanning cluster %u\n", cluster);
 
     return 0;
 }
@@ -1214,7 +1214,7 @@ exfat_read_rootdir(struct exfat_mount *emp)
     /* Scan for bitmap entry */
     error = exfat_scan_directory(emp->devvp, &ctx);
     if (bootverbose && error) {
-        printf("exfat: [%s] failed to initialize bitmap: %d\n", __func__, error);
+        printf("exfat: [exfat_read_rootdir] failed to initialize bitmap: %d\n", error);
         brelse(bp);
         return error;
     }

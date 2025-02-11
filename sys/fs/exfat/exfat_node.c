@@ -83,7 +83,8 @@ exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
     struct vnode *vp;
     int error;
 
-    printf("exfat: [exfat_get_node] getting node for cluster %u\n", cluster);
+    if (bootverbose)
+        printf("exfat: [exfat_get_node] getting node for cluster %u\n", cluster);
 
     /* Validate mount structure */
     if (emp == NULL) {
