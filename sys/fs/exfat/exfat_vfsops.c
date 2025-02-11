@@ -297,7 +297,7 @@ exfat_unmount(struct mount *mp, int mntflags)
 
     /* Close device */
     if (emp->devvp) {
-        error = VOP_CLOSE(emp->devvp, FREAD|FWRITE, NOCRED);
+        error = VOP_CLOSE(emp->devvp, FREAD|FWRITE, NOCRED, curthread);
         vrele(emp->devvp);
     }
 
