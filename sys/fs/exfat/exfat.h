@@ -369,4 +369,14 @@ int exfat_init_directory(struct exfat_mount *emp, uint32_t cluster);
 void exfat_cleanup_bitmap(struct exfat_mount *emp);
 int exfat_read_rootdir(struct exfat_mount *emp);
 
+struct exfat_node {
+    struct vnode *vnode;           /* Associated vnode */
+    struct mount *mp;              /* Mount point */
+    uint32_t cluster;             /* First cluster */
+    int type;                     /* Node type */
+    struct exfat_file_info finfo; /* File information */
+    LIST_ENTRY(exfat_node) next;  /* Hash chain */
+    struct mtx mtx_lock;          /* Node mutex */
+};
+
 #endif /* _FS_EXFAT_H_ */ 

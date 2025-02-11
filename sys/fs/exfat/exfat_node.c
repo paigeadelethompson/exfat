@@ -101,13 +101,13 @@ exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
     ep->mp = mp;
 
     /* Initialize locks before getting vnode */
-    mtx_init(&ep->lock, "exfat_node", NULL, MTX_DEF);
+    mtx_init(&ep->mtx_lock, "exfat_node", NULL, MTX_DEF);
 
     /* Get vnode */
     error = getnewvnode("exfat", mp, &exfat_vnodeops, &vp);
     if (error) {
         printf("exfat: [exfat_get_node] failed to get new vnode: %d\n", error);
-        mtx_destroy(&ep->lock);
+        mtx_destroy(&ep->mtx_lock);
         free(ep, M_EXFAT);
         return error;
     }
@@ -202,7 +202,7 @@ exfat_node_put(struct exfat_node *ep)
     LIST_REMOVE(ep, next);
     mtx_unlock(&emp->hash_mtx.mtx);
 
-    mtx_destroy(&ep->mtx);
+    mtx_destroy(&ep->mtx_lock);
     free(ep, M_EXFAT);
     if (bootverbose)
         printf("exfat: [exfat_node_put] node released\n");
