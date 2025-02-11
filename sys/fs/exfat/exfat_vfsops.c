@@ -284,34 +284,30 @@ exfat_unmount(struct mount *mp, int mntflags)
     if (bootverbose)
         printf("exfat: [exfat_unmount] unmounting filesystem\n");
 
-    flags = (mntflags & MNT_FORCE) ? FORCECLOSE : 0;
+    /* Set force unmount flag if requested */
+    if (mntflags & MNT_FORCE)
+        flags |= FORCECLOSE;
 
-    /* Flush all vnodes */
+    /* First flush all vnodes */
     error = vflush(mp, 0, flags, curthread);
-    if (error) {
-        if (bootverbose)
-            printf("exfat: [exfat_unmount] vflush failed: %d\n", error);
+    if (error && !(flags & FORCECLOSE)) {
+        printf("exfat: [exfat_unmount] vflush failed: %d\n", error);
         return error;
     }
 
-    /* Close GEOM consumer */
-    if (emp->g_consumer) {
-        g_topology_lock();
-        g_vfs_close(emp->g_consumer);
-        g_topology_unlock();
+    /* Close device */
+    if (emp->devvp) {
+        error = VOP_CLOSE(emp->devvp, FREAD|FWRITE, NOCRED);
+        vrele(emp->devvp);
     }
 
-    /* Clean up mount structure */
-    if (emp->node_hash)
-        exfat_destroy_nodes(emp);
-    exfat_cleanup_upcase(emp);
-    mntfs_freevp(emp->devvp);
+    /* Free mount structure */
+    free(emp->node_hash, M_EXFAT);
+    mtx_destroy(&emp->hash_mtx.mtx);
     free(emp, M_EXFAT);
     mp->mnt_data = NULL;
 
-    if (bootverbose)
-        printf("exfat: [exfat_unmount] filesystem unmounted successfully\n");
-    return 0;
+    return error;
 }
 
 static int
