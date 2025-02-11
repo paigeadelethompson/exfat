@@ -50,21 +50,6 @@
 #include "exfat_fat.h"
 #include "exfat_node.h"
 
-/* After the mount structure definition, add: */
-MALLOC_DEFINE(M_EXFAT, "exfat", "EXFAT filesystem");
-
-VFS_SET(exfat_vfsops, exfat, 0);
-MODULE_VERSION(exfat, 1); 
-
-static struct vfsops exfat_vfsops = {
-    .vfs_init       = exfat_init,
-    .vfs_mount      = exfat_mount,
-    .vfs_unmount    = exfat_unmount,
-    .vfs_root       = exfat_root,
-    .vfs_statfs     = exfat_statfs,
-    .vfs_sync       = exfat_sync,
-};
-
 /* Mount options */
 static const char *exfat_opts[] = {
     "from",         /* device path */
@@ -402,3 +387,17 @@ exfat_sync(struct mount *mp, int waitfor)
     return allerror;
 }
 
+static struct vfsops exfat_vfsops = {
+    .vfs_init       = exfat_init,
+    .vfs_mount      = exfat_mount,
+    .vfs_unmount    = exfat_unmount,
+    .vfs_root       = exfat_root,
+    .vfs_statfs     = exfat_statfs,
+    .vfs_sync       = exfat_sync,
+};
+
+/* After the mount structure definition, add: */
+MALLOC_DEFINE(M_EXFAT, "exfat", "EXFAT filesystem");
+
+VFS_SET(exfat_vfsops, exfat, 0);
+MODULE_VERSION(exfat, 1); 
