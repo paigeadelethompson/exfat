@@ -49,6 +49,17 @@
 #include "exfat_fat.h"
 #include "exfat_node.h"
 
+/* Mount options */
+static const char *exfat_opts[] = {
+    "from",         /* device path */
+    "async",        /* async writes */
+    "noatime",      /* don't update access times */
+    "force",        /* force mount */
+    "ro",          /* read-only */
+    "rw",          /* read-write */
+    NULL
+};
+
 static vfs_mount_t     exfat_mount;
 static vfs_unmount_t   exfat_unmount;
 static vfs_root_t      exfat_root;
@@ -219,9 +230,9 @@ exfat_mount(struct mount *mp)
     devvp = nd.ni_vp;
     NDFREE_PNBUF(&nd);
 
-    if (!vn_isdisk(devvp, &error)) {
+    if (!vn_isdisk(devvp)) {
         vput(devvp);
-        return error;
+        return ENOTBLK;
     }
 
     /* Get new vnode for block device */
@@ -329,7 +340,6 @@ exfat_statfs(struct mount *mp, struct statfs *sbp)
 static int
 exfat_sync(struct mount *mp, int waitfor)
 {
-    struct exfat_mount *emp = VFSTOEXFAT(mp);
     struct vnode *vp, *mvp;
     int error, allerror = 0;
 
@@ -372,17 +382,6 @@ static struct vfsops exfat_vfsops = {
 
 /* After the mount structure definition, add: */
 MALLOC_DEFINE(M_EXFAT, "exfat", "EXFAT filesystem");
-
-/* Mount options */
-static const char *exfat_opts[] = {
-    "from",         /* device path */
-    "async",        /* async writes */
-    "noatime",      /* don't update access times */
-    "force",        /* force mount */
-    "ro",          /* read-only */
-    "rw",          /* read-write */
-    NULL
-};
 
 VFS_SET(exfat_vfsops, exfat, 0);
 MODULE_VERSION(exfat, 1); 

@@ -78,6 +78,7 @@ struct exfat_boot_record {
 struct exfat_mount {
     struct mount *mp;
     struct vnode *devvp;      /* Device vnode */
+    struct g_consumer *g_consumer;  /* GEOM consumer */
     struct exfat_boot_record boot;
     uint32_t clusters_per_fat;
     uint32_t bytes_per_cluster;
