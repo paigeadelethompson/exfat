@@ -27,6 +27,8 @@
 int exfat_scan_directory(struct vnode *vp, struct exfat_scan_ctx *ctx);
 int exfat_next_dirent(struct exfat_scan_ctx *ctx, struct exfat_direntry_set *es);
 void exfat_scan_cleanup(struct exfat_scan_ctx *ctx);
+int exfat_scan_directory_mount(struct exfat_mount *emp, uint32_t cluster, struct exfat_scan_ctx *ctx);
+int exfat_read_rootdir(struct exfat_mount *emp);
 int exfat_name_match(struct exfat_mount *emp, const struct exfat_direntry_set *es,
                     const char *name, size_t len);
 uint16_t exfat_calc_name_hash(struct exfat_mount *emp, const uint16_t *name, size_t len);
