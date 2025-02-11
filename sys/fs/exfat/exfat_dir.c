@@ -441,14 +441,14 @@ exfat_remove_direntry(struct exfat_mount *emp, uint32_t cluster)
  * Scan directory during mount (doesn't require a vnode)
  */
 int
-exfat_scan_directory_mount(struct exfat_mount *emp, uint32_t cluster, struct exfat_scan_ctx *ctx)
+exfat_scan_directory_raw(struct exfat_mount *emp, uint32_t cluster, struct exfat_scan_ctx *ctx)
 {
     struct buf *bp = NULL;
     uint32_t sector;
     int error = 0;
 
     if (bootverbose)
-        printf("exfat: [exfat_scan_directory_mount] scanning cluster %u\n", cluster);
+        printf("exfat: [exfat_scan_directory_raw] scanning cluster %u\n", cluster);
 
     /* Initialize scan context */
     ctx->emp = emp;
@@ -462,12 +462,12 @@ exfat_scan_directory_mount(struct exfat_mount *emp, uint32_t cluster, struct exf
             ((cluster - 2) << emp->boot.sectors_per_cluster_shift);
 
     if (bootverbose)
-        printf("exfat: [exfat_scan_directory_mount] reading sector %u\n", sector);
+        printf("exfat: [exfat_scan_directory_raw] reading sector %u\n", sector);
 
     /* Read first sector */
     error = bread(emp->devvp, sector, EXFAT_SECTOR_SIZE, NOCRED, &bp);
     if (error || bp == NULL) {
-        printf("exfat: [exfat_scan_directory_mount] bread failed: %d\n", error);
+        printf("exfat: [exfat_scan_directory_raw] bread failed: %d\n", error);
         goto out;
     }
 
