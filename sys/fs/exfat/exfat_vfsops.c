@@ -208,7 +208,7 @@ exfat_mount(struct mount *mp)
     emp->boot.number_of_fats = bs->number_of_fats;
 
     if (bootverbose) {
-        printf("exfat: boot sector raw values:\n");
+        printf("exfat: [exfat_mount] boot sector raw values:\n");
         printf("  jump_boot: %02x %02x %02x\n", 
                bs->jump_boot[0], bs->jump_boot[1], bs->jump_boot[2]);
         printf("  fs_name: %.8s\n", bs->fs_name);
@@ -237,7 +237,7 @@ exfat_mount(struct mount *mp)
     }
 
     if (bootverbose) {
-        printf("exfat: filesystem parameters:\n");
+        printf("exfat: [exfat_mount] filesystem parameters:\n");
         printf("  sectors per cluster: %d\n", 1 << emp->boot.sectors_per_cluster_shift);
         printf("  cluster count: %d\n", emp->boot.cluster_count);
         printf("  FAT offset: %d\n", emp->boot.fat_offset);
@@ -273,7 +273,7 @@ exfat_mount(struct mount *mp)
     /* Initialize node hash table */
     error = exfat_init_nodes(emp);
     if (error) {
-        printf("exfat: failed to initialize node hash table: %d\n", error);
+        printf("exfat: [exfat_mount] failed to initialize node hash table: %d\n", error);
         goto error_exit;
     }
 
@@ -317,44 +317,51 @@ error_exit:
 static int
 exfat_unmount(struct mount *mp, int mntflags)
 {
-    if (bootverbose)
-        printf("exfat: [exfat_unmount] unmounting volume '%s'\n", mp->mnt_stat.f_mntfromname);
-
     struct exfat_mount *emp = VFSTOEXFAT(mp);
-    int error;
+    int error = 0;
+    int flags = 0;
+
+    if (bootverbose)
+        printf("exfat: [exfat_unmount] unmounting filesystem\n");
+
+    /* Set flags for vflush */
+    if (mntflags & MNT_FORCE)
+        flags |= FORCECLOSE;
+
+    /* Flush all vnodes first */
+    error = vflush(mp, 0, flags, curthread);
+    if (error) {
+        printf("exfat: [exfat_unmount] vflush failed: %d\n", error);
+        return error;
+    }
 
     /* Check if filesystem needs repair */
     if (emp->mount_flags & (EXFAT_MNT_FSCK | EXFAT_MNT_ERRORS)) {
         if (bootverbose)
-            printf("exfat: [exfat_unmount] filesystem needs repair (%u errors)\n", emp->error_count);
+            printf("exfat: [exfat_unmount] filesystem needs repair\n");
     }
 
     /* Mark volume clean unless errors occurred */
     if ((emp->mount_flags & EXFAT_MNT_ERRORS) == 0) {
-        error = exfat_set_volume_dirty(emp, 0);
+        /* Sync before marking clean */
+        error = VFS_SYNC(mp, MNT_WAIT);
+        if (error == 0) {
+            error = exfat_set_volume_dirty(emp, 0);
+        }
         if (error && bootverbose)
             printf("exfat: [exfat_unmount] failed to mark volume clean: %d\n", error);
     }
 
-    if (bootverbose)
-        printf("exfat: [exfat_unmount] flushing vnodes\n");
-    error = vflush(mp, 0, 0, curthread);
-    if (error) {
-        if (bootverbose)
-            printf("exfat: [exfat_unmount] vflush failed: %d\n", error);
-        return error;
-    }
-
+    /* Clean up mount structure */
+    if (emp->node_hash)
+        exfat_destroy_nodes(emp);
     exfat_cleanup_upcase(emp);
     free(emp, M_EXFAT);
     mp->mnt_data = NULL;
 
-    mtx_lock(&exfat_mount_lock);
-    exfat_mount_count--;
-    mtx_unlock(&exfat_mount_lock);
-
     if (bootverbose)
         printf("exfat: [exfat_unmount] unmount successful\n");
+
     return error;
 }
 
