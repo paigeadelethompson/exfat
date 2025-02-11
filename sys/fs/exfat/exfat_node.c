@@ -23,6 +23,7 @@
 #include <sys/mount.h>
 #include <sys/namei.h>
 #include <sys/vnode.h>
+#include <sys/types.h>
 #include <sys/bio.h>
 #include <sys/buf.h>
 #include <sys/mutex.h>
@@ -33,10 +34,10 @@
 #include "exfat_node.h"
 
 /* Map exfat node type to vnode type */
-static enum vtype
+static int
 exfat_type_to_vtype(int type)
 {
-    enum vtype vt;
+    int vt;
 
     switch (type) {
     case EXFAT_TYPE_FILE:
