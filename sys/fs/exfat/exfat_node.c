@@ -170,8 +170,7 @@ exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
     default:
         printf("exfat: [exfat_get_node] invalid node type %d\n", type);
         vn_finished_write(mp);
-        vrele(vp);
-        free(ep, M_EXFAT);
+        vrele(vp);  /* Let inactive free the node */
         return EINVAL;
     }
 
@@ -183,8 +182,7 @@ exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
     if (error) {
         printf("exfat: [exfat_get_node] read_node_info failed: %d\n", error);
         vn_finished_write(mp);
-        vrele(vp);
-        free(ep, M_EXFAT);
+        vrele(vp);  /* This will trigger inactive which frees ep */
         return error;
     }
 
