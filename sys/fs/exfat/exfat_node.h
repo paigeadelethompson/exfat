@@ -41,12 +41,13 @@ struct exfat_fileinfo {
 
 /* Node structure */
 struct exfat_node {
-    struct mount *mp;          /* Mount point */
-    uint32_t cluster;         /* Starting cluster */
-    uint32_t type;           /* Node type */
-    struct exfat_fileinfo finfo;  /* File information */
+    struct vnode *vnode;           /* Associated vnode */
+    struct mount *mp;              /* Mount point */
+    uint32_t cluster;             /* First cluster */
+    int type;                     /* Node type */
+    struct exfat_fileinfo finfo; /* File information */
     LIST_ENTRY(exfat_node) next;  /* Hash chain */
-    struct vnode *vnode;      /* Associated vnode */
+    struct mtx mtx_lock;          /* Node mutex */
 };
 
 #define VTOE(vp)     ((struct exfat_node *)(vp)->v_data)
