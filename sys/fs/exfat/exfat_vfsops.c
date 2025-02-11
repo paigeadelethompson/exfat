@@ -59,7 +59,7 @@ static int
 exfat_init(struct vfsconf *vfsp)
 {
     if (bootverbose)
-        printf("exfat: by Paige A. Thompson <paige@paige.bio> (driver loaded)\n");
+        printf("exfat: [%s] by Paige A. Thompson <paige@paige.bio> (driver loaded)\n", __func__);
     return 0;
 }
 
@@ -100,14 +100,14 @@ exfat_mount(struct mount *mp)
     int ronly = (mp->mnt_flag & MNT_RDONLY) != 0;
 
     if (bootverbose)
-        printf("exfat: mounting filesystem\n");
+        printf("exfat: [%s] mounting filesystem\n", __func__);
 
     if (vfs_filteropt(mp->mnt_optnew, exfat_opts))
         return (EINVAL);
 
     if (mp->mnt_flag & MNT_UPDATE) {
         if (bootverbose)
-            printf("exfat: update mount\n");
+            printf("exfat: [%s] update mount\n", __func__);
         return (EOPNOTSUPP);
     }
 
@@ -115,7 +115,7 @@ exfat_mount(struct mount *mp)
     from = vfs_getopts(mp->mnt_optnew, "from", &error);
     if (error) {
         if (bootverbose)
-            printf("exfat: failed to get device path\n");
+            printf("exfat: [%s] failed to get device path\n", __func__);
         return error;
     }
 
@@ -124,7 +124,7 @@ exfat_mount(struct mount *mp)
     error = namei(&nd);
     if (error) {
         if (bootverbose)
-            printf("exfat: failed to lookup device: %d\n", error);
+            printf("exfat: [%s] failed to lookup device: %d\n", __func__, error);
         return error;
     }
 
@@ -134,7 +134,7 @@ exfat_mount(struct mount *mp)
     /* Check device type */
     if (devvp->v_type != VBLK && devvp->v_type != VREG && devvp->v_type != VCHR) {
         if (bootverbose)
-            printf("exfat: not a block device, character device, or regular file (type=%d)\n", devvp->v_type);
+            printf("exfat: [%s] not a block device, character device, or regular file (type=%d)\n", __func__, devvp->v_type);
         vput(devvp);
         return ENOTBLK;
     }
@@ -145,20 +145,20 @@ exfat_mount(struct mount *mp)
 
     if (atomic_cmpset_acq_ptr((uintptr_t *)&dev->si_mountpt, 0, (uintptr_t)mp) == 0) {
         if (bootverbose)
-            printf("exfat: device already mounted\n");
+            printf("exfat: [%s] device already mounted\n", __func__);
         mntfs_freevp(devvp);
         return (EBUSY);
     }
 
     /* Open the device through GEOM */
     if (bootverbose)
-        printf("exfat: opening device through GEOM\n");
+        printf("exfat: [%s] opening device through GEOM\n", __func__);
     g_topology_lock();
     error = g_vfs_open(devvp, &cp, "exfat", ronly ? 0 : 1);
     g_topology_unlock();
     if (error != 0) {
         if (bootverbose)
-            printf("exfat: failed to open device through GEOM: %d\n", error);
+            printf("exfat: [%s] failed to open device through GEOM: %d\n", __func__, error);
         atomic_store_rel_ptr((uintptr_t *)&dev->si_mountpt, 0);
         mntfs_freevp(devvp);
         return (error);
@@ -169,7 +169,7 @@ exfat_mount(struct mount *mp)
     emp = malloc(sizeof(*emp), M_EXFAT, M_WAITOK | M_ZERO);
     if (emp == NULL) {
         if (bootverbose)
-            printf("exfat: failed to allocate mount structure\n");
+            printf("exfat: [%s] failed to allocate mount structure\n", __func__);
         error = ENOMEM;
         goto error_exit;
     }
@@ -180,11 +180,11 @@ exfat_mount(struct mount *mp)
     
     /* Read boot sector */
     if (bootverbose)
-        printf("exfat: reading boot sector\n");
+        printf("exfat: [%s] reading boot sector\n", __func__);
     error = bread(devvp, 0, EXFAT_SECTOR_SIZE, NOCRED, &bp);
     if (error) {
         if (bootverbose)
-            printf("exfat: failed to read boot sector: %d\n", error);
+            printf("exfat: [%s] failed to read boot sector: %d\n", __func__, error);
         goto error_exit;
     }
 
@@ -231,7 +231,7 @@ exfat_mount(struct mount *mp)
 
     if (memcmp(emp->boot.fs_name, "EXFAT   ", 8) != 0) {
         if (bootverbose)
-            printf("exfat: invalid filesystem signature\n");
+            printf("exfat: [%s] invalid filesystem signature\n", __func__);
         error = EINVAL;
         goto error_exit;
     }
@@ -253,20 +253,20 @@ exfat_mount(struct mount *mp)
 
     /* Initialize other mount structure fields */
     if (bootverbose)
-        printf("exfat: initializing bitmap\n");
+        printf("exfat: [%s] initializing bitmap\n", __func__);
     error = exfat_init_bitmap(emp);
     if (error) {
         if (bootverbose)
-            printf("exfat: failed to initialize bitmap: %d\n", error);
+            printf("exfat: [%s] failed to initialize bitmap: %d\n", __func__, error);
         goto error_exit;
     }
 
     if (bootverbose)
-        printf("exfat: initializing upcase table\n");
+        printf("exfat: [%s] initializing upcase table\n", __func__);
     error = exfat_init_upcase(emp);
     if (error) {
         if (bootverbose)
-            printf("exfat: failed to initialize upcase table: %d\n", error);
+            printf("exfat: [%s] failed to initialize upcase table: %d\n", __func__, error);
         goto error_exit;
     }
 
@@ -287,7 +287,7 @@ exfat_mount(struct mount *mp)
     vfs_mountedfrom(mp, from);
 
     if (bootverbose)
-        printf("exfat: mount successful\n");
+        printf("exfat: [%s] mount successful\n", __func__);
     return 0;
 
 error_exit:
@@ -318,7 +318,7 @@ static int
 exfat_unmount(struct mount *mp, int mntflags)
 {
     if (bootverbose)
-        printf("exfat: unmounting %s\n", mp->mnt_stat.f_mntfromname);
+        printf("exfat: [%s] unmounting %s\n", __func__, mp->mnt_stat.f_mntfromname);
 
     struct exfat_mount *emp = VFSTOEXFAT(mp);
     int error;
@@ -326,23 +326,22 @@ exfat_unmount(struct mount *mp, int mntflags)
     /* Check if filesystem needs repair */
     if (emp->mount_flags & (EXFAT_MNT_FSCK | EXFAT_MNT_ERRORS)) {
         if (bootverbose)
-            printf("exfat: filesystem needs repair (%u errors)\n", 
-                   emp->error_count);
+            printf("exfat: [%s] filesystem needs repair (%u errors)\n", __func__, emp->error_count);
     }
 
     /* Mark volume clean unless errors occurred */
     if ((emp->mount_flags & EXFAT_MNT_ERRORS) == 0) {
         error = exfat_set_volume_dirty(emp, 0);
         if (error && bootverbose)
-            printf("exfat: failed to mark volume clean: %d\n", error);
+            printf("exfat: [%s] failed to mark volume clean: %d\n", __func__, error);
     }
 
     if (bootverbose)
-        printf("exfat: flushing vnodes\n");
+        printf("exfat: [%s] flushing vnodes\n", __func__);
     error = vflush(mp, 0, 0, curthread);
     if (error) {
         if (bootverbose)
-            printf("exfat: vflush failed: %d\n", error);
+            printf("exfat: [%s] vflush failed: %d\n", __func__, error);
         return error;
     }
 
@@ -355,7 +354,7 @@ exfat_unmount(struct mount *mp, int mntflags)
     mtx_unlock(&exfat_mount_lock);
 
     if (bootverbose)
-        printf("exfat: unmount successful\n");
+        printf("exfat: [%s] unmount successful\n", __func__);
     return error;
 }
 
@@ -366,7 +365,7 @@ static int
 exfat_root(struct mount *mp, int flags, struct vnode **vpp)
 {
     if (bootverbose)
-        printf("exfat: getting root vnode\n");
+        printf("exfat: [%s] getting root vnode\n", __func__);
     struct exfat_mount *emp;
     struct vnode *vp;
     int error;
@@ -376,13 +375,13 @@ exfat_root(struct mount *mp, int flags, struct vnode **vpp)
     error = exfat_get_node(mp, emp->root_cluster, VDIR, &vp);
     if (error) {
         if (bootverbose)
-            printf("exfat: failed to get root node: %d\n", error);
+            printf("exfat: [%s] failed to get root node: %d\n", __func__, error);
         return error;
     }
 
     *vpp = vp;
     if (bootverbose)
-        printf("exfat: root vnode obtained\n");
+        printf("exfat: [%s] root vnode obtained\n", __func__);
     return 0;
 }
 
@@ -413,7 +412,7 @@ static int
 exfat_sync(struct mount *mp, int waitfor)
 {
     if (bootverbose)
-        printf("exfat: syncing filesystem\n");
+        printf("exfat: [%s] syncing filesystem\n", __func__);
     struct exfat_mount *emp = VFSTOEXFAT(mp);
     struct vnode *vp;
     int error, allerror = 0;
@@ -425,7 +424,7 @@ exfat_sync(struct mount *mp, int waitfor)
     /* First flush all vnodes */
     if (waitfor == MNT_WAIT) {
         if (bootverbose)
-            printf("exfat: flushing all vnodes\n");
+            printf("exfat: [%s] flushing all vnodes\n", __func__);
         struct vnode *mvp;
         vp = TAILQ_FIRST(&mp->mnt_nvnodelist);
         while (vp != NULL) {
@@ -435,7 +434,7 @@ exfat_sync(struct mount *mp, int waitfor)
             error = VOP_FSYNC(vp, MNT_WAIT, curthread);
             if (error) {
                 if (bootverbose)
-                    printf("exfat: vnode sync failed: %d\n", error);
+                    printf("exfat: [%s] vnode sync failed: %d\n", __func__, error);
                 allerror = error;
             }
             vrele(vp);
@@ -445,26 +444,26 @@ exfat_sync(struct mount *mp, int waitfor)
 
     /* Then sync memory-mapped files */
     if (bootverbose)
-        printf("exfat: syncing memory-mapped files\n");
+        printf("exfat: [%s] syncing memory-mapped files\n", __func__);
     error = vfs_stdsync(mp, MNT_WAIT);
     if (error) {
         if (bootverbose)
-            printf("exfat: memory-mapped sync failed: %d\n", error);
+            printf("exfat: [%s] memory-mapped sync failed: %d\n", __func__, error);
         allerror = error;
     }
 
     /* Finally update percent-in-use after all changes are flushed */
     if (bootverbose)
-        printf("exfat: updating percent-in-use\n");
+        printf("exfat: [%s] updating percent-in-use\n", __func__);
     error = exfat_update_percent_in_use(emp);
     if (error) {
         if (bootverbose)
-            printf("exfat: failed to update percent-in-use: %d\n", error);
+            printf("exfat: [%s] failed to update percent-in-use: %d\n", __func__, error);
         allerror = error;
     }
 
     if (bootverbose)
-        printf("exfat: sync %s\n", allerror ? "failed" : "successful");
+        printf("exfat: [%s] sync %s\n", __func__, allerror ? "failed" : "successful");
     return allerror;
 }
 

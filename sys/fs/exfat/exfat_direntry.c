@@ -180,8 +180,7 @@ exfat_create_entry(struct vnode *dvp, const char *name, int namelen,
                   struct exfat_direntry_set *es)
 {
     if (bootverbose)
-        printf("exfat: creating directory entry '%s' (len %d) in vnode %p\n",
-               name, namelen, dvp);
+        printf("exfat: [%s] creating directory entry '%s' (len %d) in vnode %p\n", __func__, name, namelen, dvp);
 
     struct exfat_mount *emp = VTOVFSMP(dvp);
     struct exfat_scan_ctx ctx;
@@ -252,7 +251,7 @@ exfat_create_entry(struct vnode *dvp, const char *name, int namelen,
 
     /* Write the new entry */
     if (bootverbose)
-        printf("exfat: writing directory entry at offset %jd\n", (intmax_t)offset);
+        printf("exfat: [%s] writing directory entry at offset %jd\n", __func__, (intmax_t)offset);
 
     return exfat_write_direntry(dvp, es, offset);
 }
@@ -264,7 +263,7 @@ int
 exfat_remove_entry(struct vnode *dvp, struct exfat_direntry_set *es, off_t offset)
 {
     if (bootverbose)
-        printf("exfat: removing directory entry at offset %jd\n", (intmax_t)offset);
+        printf("exfat: [%s] removing directory entry at offset %jd\n", __func__, (intmax_t)offset);
 
     struct buf *bp;
     uint32_t sector;
@@ -281,7 +280,7 @@ exfat_remove_entry(struct vnode *dvp, struct exfat_direntry_set *es, off_t offse
     error = bread(VTOVFSMP(dvp)->devvp, sector, EXFAT_SECTOR_SIZE, NOCRED, &bp);
     if (error) {
         if (bootverbose)
-            printf("exfat: failed to read sector: %d\n", error);
+            printf("exfat: [%s] failed to read sector: %d\n", __func__, error);
         brelse(bp);
         return error;
     }
@@ -292,13 +291,12 @@ exfat_remove_entry(struct vnode *dvp, struct exfat_direntry_set *es, off_t offse
            (1 + es->file.secondary_count) * sizeof(struct exfat_entry_file));
 
     if (bootverbose)
-        printf("exfat: marked %d entries as deleted\n", 
-               1 + es->file.secondary_count);
+        printf("exfat: [%s] marked %d entries as deleted\n", __func__, 1 + es->file.secondary_count);
 
     /* Write back sector */
     error = bwrite(bp);
     if (error && bootverbose)
-        printf("exfat: failed to write sector: %d\n", error);
+        printf("exfat: [%s] failed to write sector: %d\n", __func__, error);
 
     return error;
 } 

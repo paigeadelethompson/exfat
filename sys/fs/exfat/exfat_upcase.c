@@ -45,7 +45,7 @@ static int
 exfat_read_upcase_table(struct exfat_mount *emp, struct exfat_upcase *upcase)
 {
     if (bootverbose)
-        printf("exfat: reading upcase table data, size %lu bytes\n",
+        printf("exfat: [%s] reading upcase table data, size %lu bytes\n", __func__,
                (unsigned long)(upcase->size * sizeof(uint16_t)));
 
     struct buf *bp;
@@ -87,7 +87,7 @@ exfat_read_upcase_table(struct exfat_mount *emp, struct exfat_upcase *upcase)
     }
 
     if (bootverbose)
-        printf("exfat: upcase table data read successfully\n");
+        printf("exfat: [%s] upcase table data read successfully\n", __func__);
 
     return 0;
 }
@@ -99,7 +99,7 @@ int
 exfat_load_upcase_table(struct exfat_mount *emp)
 {
     if (bootverbose)
-        printf("exfat: loading upcase table\n");
+        printf("exfat: [%s] loading upcase table\n", __func__);
 
     struct buf *bp;
     struct exfat_entry_upcase *upcase;
@@ -138,7 +138,7 @@ exfat_load_upcase_table(struct exfat_mount *emp)
     }
 
     if (bootverbose)
-        printf("exfat: found upcase table at cluster %u, size %lu bytes\n",
+        printf("exfat: [%s] found upcase table at cluster %u, size %lu bytes\n", __func__,
                upcase->first_cluster, (unsigned long)upcase->data_length);
 
     /* Allocate memory for upcase table */
@@ -158,7 +158,7 @@ exfat_load_upcase_table(struct exfat_mount *emp)
     }
 
     if (bootverbose)
-        printf("exfat: upcase table loaded successfully\n");
+        printf("exfat: [%s] upcase table loaded successfully\n", __func__);
 
     brelse(bp);
     return 0;
@@ -171,7 +171,7 @@ void
 exfat_unload_upcase_table(struct exfat_mount *emp)
 {
     if (bootverbose)
-        printf("exfat: unloading upcase table\n");
+        printf("exfat: [%s] unloading upcase table\n", __func__);
 
     struct exfat_upcase *up = emp->upcase;
     if (up) {

@@ -34,7 +34,7 @@ exfat_access(struct vnode *vp, accmode_t accmode, struct ucred *cred,
              struct thread *td)
 {
     if (bootverbose)
-        printf("exfat: checking access for vnode %p, mode 0x%x\n", vp, accmode);
+        printf("exfat: [%s] checking access for vnode %p, mode 0x%x\n", __func__, vp, accmode);
 
     struct exfat_node *ep = VTOE(vp);
     int error = 0;
@@ -42,7 +42,7 @@ exfat_access(struct vnode *vp, accmode_t accmode, struct ucred *cred,
     /* Handle read-only filesystem */
     if ((accmode & VWRITE) && (vp->v_mount->mnt_flag & MNT_RDONLY)) {
         if (bootverbose)
-            printf("exfat: write access denied - filesystem is read-only\n");
+            printf("exfat: [%s] write access denied - filesystem is read-only\n", __func__);
         if (vp->v_type == VDIR)
             return EISDIR;
         return EROFS;
@@ -55,14 +55,14 @@ exfat_access(struct vnode *vp, accmode_t accmode, struct ucred *cred,
             return EACCES;
         }
         if (bootverbose)
-            printf("exfat: root access granted\n");
+            printf("exfat: [%s] root access granted\n", __func__);
         return 0;
     }
 
     /* Check if file is read-only */
     if ((accmode & VWRITE) && (ep->finfo.attributes & EXFAT_ATTR_READ_ONLY)) {
         if (bootverbose)
-            printf("exfat: file write access denied - read only\n");
+            printf("exfat: [%s] file write access denied - read only\n", __func__);
         return EACCES;
     }
 
@@ -72,7 +72,7 @@ exfat_access(struct vnode *vp, accmode_t accmode, struct ucred *cred,
     }
 
     if (bootverbose)
-        printf("exfat: access check %s\n", error ? "denied" : "granted");
+        printf("exfat: [%s] access check %s\n", __func__, error ? "denied" : "granted");
 
     return error;
 } 

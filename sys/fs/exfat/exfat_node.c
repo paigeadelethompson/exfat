@@ -84,7 +84,7 @@ exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
     int error;
 
     if (bootverbose)
-        printf("exfat: getting node for cluster %u\n", cluster);
+        printf("exfat: [%s] getting node for cluster %u\n", __func__, cluster);
 
     /* Validate mount structure */
     if (emp == NULL) {
@@ -93,7 +93,7 @@ exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
     }
 
     if (bootverbose)
-        printf("exfat: checking hash table at %p\n", emp->node_hash);
+        printf("exfat: [%s] checking hash table at %p\n", __func__, emp->node_hash);
 
     /* Validate hash table */
     if (emp->node_hash == NULL) {
@@ -102,7 +102,7 @@ exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
     }
 
     if (bootverbose)
-        printf("exfat: checking mutex at %p\n", &emp->hash_mtx.mtx);
+        printf("exfat: [%s] checking mutex at %p\n", __func__, &emp->hash_mtx.mtx);
 
     /* Validate cluster number */
     if (cluster < EXFAT_CLUSTER_FIRST || cluster >= emp->clusters_count + 2) {
@@ -112,12 +112,12 @@ exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
 
     /* Check hash table first */
     if (bootverbose)
-        printf("exfat: acquiring mutex\n");
+        printf("exfat: [%s] acquiring mutex\n", __func__);
 
     mtx_lock(&emp->hash_mtx.mtx);
 
     if (bootverbose)
-        printf("exfat: mutex acquired, looking up cluster\n");
+        printf("exfat: [%s] mutex acquired, looking up cluster\n", __func__);
 
     ep = exfat_hash_lookup(emp, cluster);
     if (ep) {
@@ -227,7 +227,7 @@ exfat_node_put(struct exfat_node *ep)
     struct exfat_mount *emp = VFSTOEXFAT(mp);
 
     if (bootverbose)
-        printf("exfat: releasing node for cluster %u\n", ep->cluster);
+        printf("exfat: [%s] releasing node for cluster %u\n", __func__, ep->cluster);
 
     mtx_lock(&emp->hash_mtx.mtx);
     LIST_REMOVE(ep, next);
@@ -235,14 +235,14 @@ exfat_node_put(struct exfat_node *ep)
 
     free(ep, M_EXFAT);
     if (bootverbose)
-        printf("exfat: node released\n");
+        printf("exfat: [%s] node released\n", __func__);
 }
 
 int
 exfat_init_nodes(struct exfat_mount *emp)
 {
     if (bootverbose)
-        printf("exfat: initializing node hash table for mount %p\n", emp);
+        printf("exfat: [%s] initializing node hash table for mount %p\n", __func__, emp);
 
     /* Validate mount structure */
     if (emp == NULL) {
@@ -258,14 +258,13 @@ exfat_init_nodes(struct exfat_mount *emp)
     }
 
     if (bootverbose)
-        printf("exfat: initializing mutex at %p\n", &emp->hash_mtx.mtx);
+        printf("exfat: [%s] initializing mutex at %p\n", __func__, &emp->hash_mtx.mtx);
 
     /* Initialize mutex */
     mtx_init(&emp->hash_mtx.mtx, "exfat_node_hash", NULL, MTX_DEF);
 
     if (bootverbose)
-        printf("exfat: node hash table initialized at %p, mutex at %p\n",
-               emp->node_hash, &emp->hash_mtx.mtx);
+        printf("exfat: [%s] node hash table initialized at %p, mutex at %p\n", __func__, emp->node_hash, &emp->hash_mtx.mtx);
 
     return 0;
 }
@@ -274,7 +273,7 @@ void
 exfat_destroy_nodes(struct exfat_mount *emp)
 {
     if (bootverbose)
-        printf("exfat: destroying node hash table\n");
+        printf("exfat: [%s] destroying node hash table\n", __func__);
 
     if (emp->node_hash) {
         /* Free any remaining entries */

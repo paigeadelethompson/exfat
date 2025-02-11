@@ -37,7 +37,7 @@ int
 exfat_scan_directory(struct vnode *vp, struct exfat_scan_ctx *ctx)
 {
     if (bootverbose)
-        printf("exfat: scanning directory vnode %p\n", vp);
+        printf("exfat: [%s] scanning directory vnode %p\n", __func__, vp);
 
     struct exfat_mount *emp = VTOVFSMP(vp);
     struct exfat_node *ep = VTOE(vp);
@@ -74,7 +74,7 @@ int
 exfat_next_dirent(struct exfat_scan_ctx *ctx, struct exfat_direntry_set *es)
 {
     if (bootverbose)
-        printf("exfat: reading next directory entry at offset %u\n", ctx->offset);
+        printf("exfat: [%s] reading next directory entry at offset %u\n", __func__, ctx->offset);
 
     struct buf *bp;
     uint32_t sector;
@@ -130,12 +130,12 @@ exfat_next_dirent(struct exfat_scan_ctx *ctx, struct exfat_direntry_set *es)
     /* Read file entry */
     if (ctx->entry[ctx->offset] != EXFAT_ENTRY_FILE) {
         if (bootverbose)
-            printf("exfat: invalid directory entry type: %d\n", ctx->entry[ctx->offset]);
+            printf("exfat: [%s] invalid directory entry type: %d\n", __func__, ctx->entry[ctx->offset]);
         return EINVAL;
     }
 
     if (bootverbose)
-        printf("exfat: reading file entry at offset %u\n", ctx->offset);
+        printf("exfat: [%s] reading file entry at offset %u\n", __func__, ctx->offset);
 
     memcpy(&es->file, ctx->entry + ctx->offset, sizeof(struct exfat_entry_file));
     ctx->offset += sizeof(struct exfat_entry_file);
@@ -195,7 +195,7 @@ exfat_name_match(struct exfat_mount *emp, const struct exfat_direntry_set *es,
                 const char *name, size_t len)
 {
     if (bootverbose)
-        printf("exfat: comparing name '%s' (len %zu)\n", name, len);
+        printf("exfat: [%s] comparing name '%s' (len %zu)\n", __func__, name, len);
 
     uint16_t uname[256];
     size_t ulen, i;
@@ -208,15 +208,15 @@ exfat_name_match(struct exfat_mount *emp, const struct exfat_direntry_set *es,
     /* Check length first */
     if (ulen != es->stream.name_length) {
         if (bootverbose)
-            printf("exfat: name length mismatch (%zu != %u)\n", 
-                   ulen, es->stream.name_length);
+            printf("exfat: [%s] name length mismatch (%zu != %u)\n", 
+                   __func__, ulen, es->stream.name_length);
         return 0;
     }
 
     int match = (exfat_name_compare(emp, uname, es->name[0].name, 
                                    MIN(ulen, es->stream.name_length)) == 0);
     if (bootverbose)
-        printf("exfat: name comparison %s\n", match ? "matched" : "failed");
+        printf("exfat: [%s] name comparison %s\n", __func__, match ? "matched" : "failed");
 
     return match;
 }
@@ -237,4 +237,71 @@ exfat_calc_name_hash(struct exfat_mount *emp, const uint16_t *name, size_t len)
     }
 
     return hash;
+}
+
+/*
+ * Create directory entry
+ */
+int
+exfat_create_direntry(struct exfat_mount *emp, uint32_t cluster, struct exfat_entry_file *file,
+                      struct exfat_entry_stream *stream, struct exfat_entry_name *name,
+                      size_t name_count)
+{
+    if (bootverbose)
+        printf("exfat: [%s] creating directory entry at cluster %u\n", __func__, cluster);
+
+    struct exfat_node *ep = VTOE(emp->devvp);
+    int error;
+
+    /* Initialize new entry */
+    error = exfat_init_entry(emp, cluster, &ep->finfo);
+    if (error)
+        return error;
+
+    /* Set entry type */
+    ep->finfo.type = EXFAT_ENTRY_FILE;
+
+    /* Set file entry */
+    memcpy(&ep->finfo.file, file, sizeof(struct exfat_entry_file));
+
+    /* Set stream entry */
+    memcpy(&ep->finfo.stream, stream, sizeof(struct exfat_entry_stream));
+
+    /* Set name entries */
+    memcpy(ep->finfo.name, name, name_count * sizeof(struct exfat_entry_name));
+
+    /* Write entry to disk */
+    error = exfat_write_entry(emp, &ep->finfo);
+    if (error)
+        return error;
+
+    return 0;
+}
+
+/*
+ * Remove directory entry
+ */
+int
+exfat_remove_direntry(struct exfat_mount *emp, uint32_t cluster)
+{
+    if (bootverbose)
+        printf("exfat: [%s] removing directory entry at cluster %u\n", __func__, cluster);
+
+    struct exfat_node *ep = VTOE(emp->devvp);
+    int error;
+
+    /* Initialize entry */
+    error = exfat_init_entry(emp, cluster, &ep->finfo);
+    if (error)
+        return error;
+
+    /* Set entry type */
+    ep->finfo.type = EXFAT_ENTRY_DELETED;
+
+    /* Write entry to disk */
+    error = exfat_write_entry(emp, &ep->finfo);
+    if (error)
+        return error;
+
+    return 0;
 } 

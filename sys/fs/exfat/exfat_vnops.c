@@ -44,7 +44,7 @@ static int
 exfat_read_cluster(struct vnode *vp, struct exfat_mount *emp, uint32_t cluster, char *buffer)
 {
     if (bootverbose)
-        printf("exfat: reading cluster %u\n", cluster);
+        printf("exfat: [%s] reading cluster %u\n", __func__, cluster);
 
     struct buf *bp;
     uint32_t sector;
@@ -124,7 +124,7 @@ static int
 exfat_write_cluster(struct vnode *vp, struct exfat_mount *emp, uint32_t cluster, char *buffer)
 {
     if (bootverbose)
-        printf("exfat: writing cluster %u\n", cluster);
+        printf("exfat: [%s] writing cluster %u\n", __func__, cluster);
 
     struct buf *bp;
     uint32_t sector;
@@ -201,8 +201,8 @@ static int
 exfat_read(struct vop_read_args *ap)
 {
     if (bootverbose)
-        printf("exfat: reading file, offset %jd size %zd\n", 
-               (intmax_t)ap->a_uio->uio_offset, ap->a_uio->uio_resid);
+        printf("exfat: [%s] reading file, offset=%ju, size=%ju\n", __func__, 
+               (uintmax_t)ap->a_uio->uio_offset, (uintmax_t)ap->a_uio->uio_resid);
 
     struct vnode *vp = ap->a_vp;
     struct uio *uio = ap->a_uio;
@@ -304,7 +304,7 @@ static int
 exfat_getattr(struct vop_getattr_args *ap)
 {
     if (bootverbose)
-        printf("exfat: getting attributes for vnode %p\n", ap->a_vp);
+        printf("exfat: [%s] getting attributes for vnode %p\n", __func__, ap->a_vp);
 
     struct vnode *vp = ap->a_vp;
     struct vattr *vap = ap->a_vap;
@@ -351,7 +351,7 @@ exfat_inactive(struct vop_inactive_args *ap)
     struct exfat_mount *emp = VFSTOEXFAT(vp->v_mount);
 
     if (bootverbose)
-        printf("exfat: deactivating vnode %p\n", vp);
+        printf("exfat: [%s] deactivating vnode %p\n", __func__, vp);
 
     mtx_lock(&emp->hash_mtx.mtx);
     LIST_REMOVE(ep, next);
@@ -374,7 +374,7 @@ exfat_reclaim(struct vop_reclaim_args *ap)
     struct exfat_mount *emp = VFSTOEXFAT(vp->v_mount);
 
     if (bootverbose)
-        printf("exfat: reclaiming vnode %p\n", vp);
+        printf("exfat: [%s] reclaiming vnode %p\n", __func__, vp);
 
     mtx_lock(&emp->hash_mtx.mtx);
     LIST_REMOVE(ep, next);
@@ -407,8 +407,8 @@ static int
 exfat_write(struct vop_write_args *ap)
 {
     if (bootverbose)
-        printf("exfat: writing file, offset %jd size %zd\n",
-               (intmax_t)ap->a_uio->uio_offset, ap->a_uio->uio_resid);
+        printf("exfat: [%s] writing file, offset=%ju, size=%ju\n", __func__, 
+               (uintmax_t)ap->a_uio->uio_offset, (uintmax_t)ap->a_uio->uio_resid);
 
     struct vnode *vp = ap->a_vp;
     struct uio *uio = ap->a_uio;
@@ -503,8 +503,7 @@ static int
 exfat_create(struct vop_create_args *ap)
 {
     if (bootverbose)
-        printf("exfat: creating file '%s' in directory %p\n", 
-               ap->a_cnp->cn_nameptr, ap->a_dvp);
+        printf("exfat: [%s] creating file '%s'\n", __func__, cnp->cn_nameptr);
 
     struct vnode *dvp = ap->a_dvp;
     struct vnode **vpp = ap->a_vpp;
@@ -555,8 +554,7 @@ static int
 exfat_mkdir(struct vop_mkdir_args *ap)
 {
     if (bootverbose)
-        printf("exfat: creating directory '%s' in directory %p\n",
-               ap->a_cnp->cn_nameptr, ap->a_dvp);
+        printf("exfat: [%s] creating directory '%s'\n", __func__, cnp->cn_nameptr);
 
     struct vnode *dvp = ap->a_dvp;
     struct vnode **vpp = ap->a_vpp;
@@ -614,8 +612,7 @@ static int
 exfat_remove(struct vop_remove_args *ap)
 {
     if (bootverbose)
-        printf("exfat: removing file '%s' from directory %p\n",
-               ap->a_cnp->cn_nameptr, ap->a_dvp);
+        printf("exfat: [%s] removing file '%s'\n", __func__, ep->name);
 
     struct vnode *dvp = ap->a_dvp;
     struct vnode *vp = ap->a_vp;
@@ -662,8 +659,7 @@ static int
 exfat_rmdir(struct vop_rmdir_args *ap)
 {
     if (bootverbose)
-        printf("exfat: removing directory '%s' from directory %p\n",
-               ap->a_cnp->cn_nameptr, ap->a_dvp);
+        printf("exfat: [%s] removing directory '%s'\n", __func__, ep->name);
 
     struct vnode *dvp = ap->a_dvp;
     struct vnode *vp = ap->a_vp;
@@ -720,8 +716,7 @@ static int
 exfat_rename(struct vop_rename_args *ap)
 {
     if (bootverbose)
-        printf("exfat: renaming '%s' to '%s'\n",
-               ap->a_fcnp->cn_nameptr, ap->a_tcnp->cn_nameptr);
+        printf("exfat: [%s] renaming '%s' to '%s'\n", __func__, fep->name, cnp->cn_nameptr);
 
     struct vnode *fdvp = ap->a_fdvp;    /* from directory vnode */
     struct vnode *fvp = ap->a_fvp;      /* from file/dir vnode */
@@ -877,7 +872,7 @@ static int
 exfat_open(struct vop_open_args *ap)
 {
     if (bootverbose)
-        printf("exfat: opening vnode %p, flags 0x%x\n", ap->a_vp, ap->a_mode);
+        printf("exfat: [%s] opening vnode %p, flags 0x%x\n", __func__, ap->a_vp, ap->a_mode);
 
     struct vnode *vp = ap->a_vp;
     int flags = ap->a_mode;
@@ -903,7 +898,7 @@ static int
 exfat_close(struct vop_close_args *ap)
 {
     if (bootverbose)
-        printf("exfat: closing vnode %p\n", ap->a_vp);
+        printf("exfat: [%s] closing vnode %p\n", __func__, ap->a_vp);
 
     struct vnode *vp = ap->a_vp;
 
@@ -970,7 +965,7 @@ static int
 exfat_strategy(struct vop_strategy_args *ap)
 {
     if (bootverbose)
-        printf("exfat: strategy for vnode %p, block %jd\n", 
+        printf("exfat: [%s] strategy for vnode %p, block %jd\n", __func__, 
                ap->a_vp, (intmax_t)ap->a_bp->b_blkno);
 
     struct vnode *vp = ap->a_vp;
