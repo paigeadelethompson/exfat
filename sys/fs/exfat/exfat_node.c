@@ -114,7 +114,19 @@ exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
 
     /* Initialize vnode */
     vp->v_data = ep;
-    vp->v_type = IFTOVT(type);  /* Convert type to vnode type */
+    /* Set vnode type based on node type */
+    switch (type) {
+    case EXFAT_TYPE_FILE:
+        vp->v_type = VREG;
+        break;
+    case EXFAT_TYPE_DIR:
+        vp->v_type = VDIR;
+        break;
+    default:
+        vput(vp);
+        free(ep, M_EXFAT);
+        return EINVAL;
+    }
     ep->vnode = vp;
 
     /* Lock the vnode */
