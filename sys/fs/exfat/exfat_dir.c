@@ -481,26 +481,4 @@ out:
     if (bp != NULL)
         brelse(bp);
     return error;
-}
-
-int
-exfat_read_rootdir(struct exfat_mount *emp)
-{
-    struct exfat_scan_ctx ctx;
-    int error;
-
-    if (bootverbose) {
-        printf("exfat: [exfat_read_rootdir] reading root directory:\n");
-        printf("  cluster_heap_offset: %u\n", emp->boot.cluster_heap_offset);
-        printf("  root_cluster: %u\n", emp->root_cluster);
-        printf("  sectors_per_cluster_shift: %u\n", emp->boot.sectors_per_cluster_shift);
-    }
-
-    error = exfat_scan_directory_mount(emp, emp->root_cluster, &ctx);
-    if (error) {
-        printf("exfat: [exfat_read_rootdir] failed to initialize bitmap: %d\n", error);
-        return error;
-    }
-
-    return 0;
 } 
