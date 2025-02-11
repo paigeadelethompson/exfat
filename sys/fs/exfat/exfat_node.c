@@ -202,6 +202,7 @@ exfat_node_put(struct exfat_node *ep)
     LIST_REMOVE(ep, next);
     mtx_unlock(&emp->hash_mtx.mtx);
 
+    mtx_destroy(&ep->mtx);
     free(ep, M_EXFAT);
     if (bootverbose)
         printf("exfat: [exfat_node_put] node released\n");
