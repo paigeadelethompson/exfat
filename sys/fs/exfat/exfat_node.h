@@ -67,6 +67,10 @@ struct exfat_hash_entry {
 /* List head type for node hash table */
 LIST_HEAD(exfat_node_list, exfat_node);
 
+/* Node types */
+#define EXFAT_TYPE_FILE    1
+#define EXFAT_TYPE_DIR     2
+
 /* Function prototypes */
 int exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp);
 int exfat_node_init(void);

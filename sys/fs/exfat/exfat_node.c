@@ -27,9 +27,24 @@
 #include <sys/buf.h>
 #include <sys/mutex.h>
 #include <sys/hash.h>
+#include <sys/stat.h>
 
 #include "exfat.h"
 #include "exfat_node.h"
+
+/* Map exfat node type to vnode type */
+static enum vtype
+exfat_type_to_vtype(int type)
+{
+    switch (type) {
+    case EXFAT_TYPE_FILE:
+        return VREG;
+    case EXFAT_TYPE_DIR:
+        return VDIR;
+    default:
+        return VNON;
+    }
+}
 
 /*
  * Initialize the node hash table
@@ -106,7 +121,7 @@ exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
     ep->vnode = vp;
 
     /* Initialize vnode */
-    vp->v_type = IFTOVT(type);  /* Set vnode type based on node type */
+    vp->v_type = exfat_type_to_vtype(type);
     vp->v_op = &exfat_vnodeops;
 
     /* Read file/directory information */
