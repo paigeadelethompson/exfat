@@ -83,8 +83,7 @@ exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
     struct vnode *vp;
     int error;
 
-    if (bootverbose)
-        printf("exfat: [%s] getting node for cluster %u\n", __func__, cluster);
+    printf("exfat: [exfat_get_node] getting node for cluster %u\n", cluster);
 
     /* Validate mount structure */
     if (emp == NULL) {
@@ -93,7 +92,7 @@ exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
     }
 
     if (bootverbose)
-        printf("exfat: [%s] checking hash table at %p\n", __func__, emp->node_hash);
+        printf("exfat: [exfat_get_node] checking hash table at %p\n", emp->node_hash);
 
     /* Validate hash table */
     if (emp->node_hash == NULL) {
@@ -102,7 +101,7 @@ exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
     }
 
     if (bootverbose)
-        printf("exfat: [%s] checking mutex at %p\n", __func__, &emp->hash_mtx.mtx);
+        printf("exfat: [exfat_get_node] checking mutex at %p\n", &emp->hash_mtx.mtx);
 
     /* Validate cluster number */
     if (cluster < EXFAT_CLUSTER_FIRST || cluster >= emp->clusters_count + 2) {
@@ -112,12 +111,12 @@ exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
 
     /* Check hash table first */
     if (bootverbose)
-        printf("exfat: [%s] acquiring mutex\n", __func__);
+        printf("exfat: [exfat_get_node] acquiring mutex\n");
 
     mtx_lock(&emp->hash_mtx.mtx);
 
     if (bootverbose)
-        printf("exfat: [%s] mutex acquired, looking up cluster\n", __func__);
+        printf("exfat: [exfat_get_node] mutex acquired, looking up cluster\n");
 
     ep = exfat_hash_lookup(emp, cluster);
     if (ep) {
@@ -227,7 +226,7 @@ exfat_node_put(struct exfat_node *ep)
     struct exfat_mount *emp = VFSTOEXFAT(mp);
 
     if (bootverbose)
-        printf("exfat: [%s] releasing node for cluster %u\n", __func__, ep->cluster);
+        printf("exfat: [exfat_node_put] releasing node at cluster %u\n", ep->cluster);
 
     mtx_lock(&emp->hash_mtx.mtx);
     LIST_REMOVE(ep, next);
@@ -235,14 +234,14 @@ exfat_node_put(struct exfat_node *ep)
 
     free(ep, M_EXFAT);
     if (bootverbose)
-        printf("exfat: [%s] node released\n", __func__);
+        printf("exfat: [exfat_node_put] node released\n");
 }
 
 int
 exfat_init_nodes(struct exfat_mount *emp)
 {
     if (bootverbose)
-        printf("exfat: [%s] initializing node hash table for mount %p\n", __func__, emp);
+        printf("exfat: [exfat_init_nodes] initializing node hash table for mount %p\n", emp);
 
     /* Validate mount structure */
     if (emp == NULL) {
@@ -258,13 +257,13 @@ exfat_init_nodes(struct exfat_mount *emp)
     }
 
     if (bootverbose)
-        printf("exfat: [%s] initializing mutex at %p\n", __func__, &emp->hash_mtx.mtx);
+        printf("exfat: [exfat_init_nodes] initializing mutex at %p\n", &emp->hash_mtx.mtx);
 
     /* Initialize mutex */
     mtx_init(&emp->hash_mtx.mtx, "exfat_node_hash", NULL, MTX_DEF);
 
     if (bootverbose)
-        printf("exfat: [%s] node hash table initialized at %p, mutex at %p\n", __func__, emp->node_hash, &emp->hash_mtx.mtx);
+        printf("exfat: [exfat_init_nodes] node hash table initialized at %p, mutex at %p\n", emp->node_hash, &emp->hash_mtx.mtx);
 
     return 0;
 }
@@ -273,7 +272,7 @@ void
 exfat_destroy_nodes(struct exfat_mount *emp)
 {
     if (bootverbose)
-        printf("exfat: [%s] destroying node hash table\n", __func__);
+        printf("exfat: [exfat_destroy_nodes] destroying node hash table\n");
 
     if (emp->node_hash) {
         /* Free any remaining entries */
@@ -318,4 +317,37 @@ void
 exfat_hash_remove(struct exfat_mount *emp, struct exfat_node *ep)
 {
     LIST_REMOVE(ep, next);
-} 
+}
+
+/* In exfat_sync_node */
+    if (bootverbose)
+        printf("exfat: [exfat_sync_node] syncing node at cluster %u\n", ep->cluster);
+
+/* In exfat_update_node */
+    if (bootverbose)
+        printf("exfat: [exfat_update_node] updating node at cluster %u\n", ep->cluster);
+
+/* In exfat_node_get_block */
+    if (bootverbose)
+        printf("exfat: [exfat_node_get_block] getting block for node at cluster %u\n", ep->cluster);
+
+/* In exfat_node_set_block */
+    if (bootverbose)
+        printf("exfat: [exfat_node_set_block] setting block for node at cluster %u\n", ep->cluster);
+
+/* In exfat_node_read */
+    if (bootverbose)
+        printf("exfat: [exfat_node_read] reading node at cluster %u\n", ep->cluster);
+
+/* In exfat_node_write */
+    if (bootverbose)
+        printf("exfat: [exfat_node_write] writing node at cluster %u\n", ep->cluster);
+
+/* In exfat_node_truncate */
+    if (bootverbose)
+        printf("exfat: [exfat_node_truncate] truncating node at cluster %u to size %jd\n",
+               ep->cluster, (intmax_t)length); 
+
+printf("exfat: [exfat_lookup_node] looking up node '%s' in directory %p\n", cnp->cn_nameptr, dvp);
+
+printf("exfat: [exfat_init_node] initializing node for cluster %u\n", cluster); 

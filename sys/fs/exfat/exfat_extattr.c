@@ -33,8 +33,8 @@ exfat_getextattr(struct vnode *vp, int attrnamespace, const char *name,
                  struct uio *uio, size_t *size, struct ucred *cred)
 {
     if (bootverbose)
-        printf("exfat: [%s] getting extended attribute '%s' (namespace %d) for vnode %p\n",
-               __func__, name, attrnamespace, vp);
+        printf("exfat: [exfat_getextattr] getting extended attribute '%s' (namespace %d) for vnode %p\n",
+               name, attrnamespace, vp);
 
     struct exfat_node *ep = VTOE(vp);
     struct exfat_extattr *eap;
@@ -80,8 +80,8 @@ exfat_setextattr(struct vnode *vp, int attrnamespace, const char *name,
                  struct uio *uio, struct ucred *cred)
 {
     if (bootverbose)
-        printf("exfat: [%s] setting extended attribute '%s' (namespace %d) for vnode %p\n",
-               __func__, name, attrnamespace, vp);
+        printf("exfat: [exfat_setextattr] setting extended attribute '%s' (namespace %d) for vnode %p\n",
+               name, attrnamespace, vp);
 
     struct exfat_node *ep = VTOE(vp);
     struct exfat_extattr *eap;
@@ -150,8 +150,8 @@ exfat_listextattr(struct vnode *vp, int attrnamespace,
                   struct uio *uio, size_t *size, struct ucred *cred)
 {
     if (bootverbose)
-        printf("exfat: [%s] listing extended attributes (namespace %d) for vnode %p\n",
-               __func__, attrnamespace, vp);
+        printf("exfat: [exfat_listextattr] listing extended attributes (namespace %d) for vnode %p\n",
+               attrnamespace, vp);
 
     struct exfat_node *ep = VTOE(vp);
     struct exfat_extattr *eap;

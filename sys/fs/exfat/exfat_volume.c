@@ -43,6 +43,9 @@ exfat_read_volume_label(struct exfat_mount *emp)
     int error;
     size_t outused;
 
+    if (bootverbose)
+        printf("exfat: [exfat_read_volume_label] reading volume label\n");
+
     /* Read first sector of root directory */
     sector = emp->boot.cluster_heap_offset +
              ((emp->root_cluster - 2) << emp->boot.sectors_per_cluster_shift);
@@ -102,6 +105,9 @@ exfat_write_volume_label(struct exfat_mount *emp, const char *label, size_t len)
     uint32_t sector;
     int error;
     size_t outused;
+
+    if (bootverbose)
+        printf("exfat: [exfat_write_volume_label] writing volume label\n");
 
     /* Validate label */
     error = exfat_validate_label(label, len);
@@ -168,11 +174,11 @@ exfat_init_bitmap(struct exfat_mount *emp)
     int error;
 
     if (bootverbose)
-        printf("exfat: [%s] initializing bitmap, root_cluster=%u\n", __func__, emp->root_cluster);
+        printf("exfat: [exfat_init_bitmap] initializing bitmap\n");
 
     if (bootverbose)
-        printf("exfat: [%s] cluster_heap_offset=%u, sectors_per_cluster=%u\n",
-               __func__, emp->boot.cluster_heap_offset,
+        printf("exfat: [exfat_init_bitmap] cluster_heap_offset=%u, sectors_per_cluster=%u\n",
+               emp->boot.cluster_heap_offset,
                1 << emp->boot.sectors_per_cluster_shift);
 
     /* Read first sector of root directory */
@@ -180,21 +186,21 @@ exfat_init_bitmap(struct exfat_mount *emp)
              ((emp->root_cluster - 2) << emp->boot.sectors_per_cluster_shift);
 
     if (bootverbose)
-        printf("exfat: reading root directory at sector %u (calc: %u + ((%u - 2) << %u))\n",
+        printf("exfat: [exfat_init_bitmap] reading root directory at sector %u (calc: %u + ((%u - 2) << %u))\n",
                sector, emp->boot.cluster_heap_offset, emp->root_cluster,
                emp->boot.sectors_per_cluster_shift);
 
     error = bread(emp->devvp, sector, EXFAT_SECTOR_SIZE, NOCRED, &bp);
     if (error) {
         if (bootverbose)
-            printf("exfat: failed to read root directory sector: %d\n", error);
+            printf("exfat: [exfat_init_bitmap] failed to read root directory sector: %d\n", error);
         brelse(bp);
         return error;
     }
 
     /* Dump first 64 bytes of sector */
     if (bootverbose) {
-        printf("exfat: root directory contents:\n");
+        printf("exfat: [exfat_init_bitmap] root directory contents:\n");
         for (int i = 0; i < 64; i++) {
             printf("%02x ", ((uint8_t *)bp->b_data)[i]);
             if ((i + 1) % 16 == 0)
@@ -205,32 +211,32 @@ exfat_init_bitmap(struct exfat_mount *emp)
     /* Look for bitmap entry */
     entry = (struct exfat_entry_bitmap *)bp->b_data;
     if (bootverbose)
-        printf("exfat: scanning for bitmap entry, first entry type=0x%02x\n", entry->type);
+        printf("exfat: [exfat_init_bitmap] scanning for bitmap entry, first entry type=0x%02x\n", entry->type);
 
     while (entry->type != EXFAT_ENTRY_BITMAP && entry->type != EXFAT_ENTRY_EOD) {
         if (bootverbose)
-            printf("exfat: checking entry at offset %td, type=0x%02x\n",
+            printf("exfat: [exfat_init_bitmap] checking entry at offset %td, type=0x%02x\n",
                    (uint8_t *)entry - (uint8_t *)bp->b_data, entry->type);
         entry++;
         if ((uint8_t *)entry >= (uint8_t *)bp->b_data + EXFAT_SECTOR_SIZE) {
             if (bootverbose)
-                printf("exfat: reached end of sector without finding bitmap\n");
+                printf("exfat: [exfat_init_bitmap] reached end of sector without finding bitmap\n");
             brelse(bp);
             return ENOENT;
         }
         if (bootverbose)
-            printf("exfat: entry type=0x%02x\n", entry->type);
+            printf("exfat: [exfat_init_bitmap] entry type=0x%02x\n", entry->type);
     }
 
     if (entry->type == EXFAT_ENTRY_EOD) {
         if (bootverbose)
-            printf("exfat: found end of directory without bitmap\n");
+            printf("exfat: [exfat_init_bitmap] found end of directory without bitmap\n");
         brelse(bp);
         return ENOENT;
     }
 
     if (bootverbose)
-        printf("exfat: found bitmap entry, first_cluster=%u, size=%lu\n",
+        printf("exfat: [exfat_init_bitmap] found bitmap entry, first_cluster=%u, size=%lu\n",
                le32toh(entry->first_cluster), (unsigned long)le64toh(entry->data_length));
 
     /* Store bitmap information in mount structure */
@@ -247,6 +253,9 @@ exfat_init_bitmap(struct exfat_mount *emp)
 void
 exfat_cleanup_bitmap(struct exfat_mount *emp)
 {
+    if (bootverbose)
+        printf("exfat: [exfat_cleanup_bitmap] cleaning up bitmap\n");
+
     /* Nothing to clean up yet */
 }
 
@@ -257,6 +266,9 @@ static int
 exfat_read_bitmap_block(struct exfat_mount *emp, uint32_t block, struct buf **bpp)
 {
     uint32_t sector;
+
+    if (bootverbose)
+        printf("exfat: [exfat_read_bitmap_block] reading bitmap block %u\n", block);
 
     sector = emp->boot.cluster_heap_offset +
              ((emp->bitmap_cluster - 2) << emp->boot.sectors_per_cluster_shift) +
@@ -275,6 +287,9 @@ exfat_get_cluster_status(struct exfat_mount *emp, uint32_t cluster, int *used)
     uint32_t byte_offset, bit_offset, block;
     uint8_t *bitmap;
     int error;
+
+    if (bootverbose)
+        printf("exfat: [exfat_get_cluster_status] getting status for cluster %u\n", cluster);
 
     if (cluster < 2 || cluster >= emp->boot.cluster_count + 2)
         return EINVAL;
@@ -308,6 +323,9 @@ exfat_set_cluster_status(struct exfat_mount *emp, uint32_t cluster, int used)
     uint32_t byte_offset, bit_offset, block;
     uint8_t *bitmap, mask;
     int error;
+
+    if (bootverbose)
+        printf("exfat: [exfat_set_cluster_status] setting status for cluster %u to %s\n", cluster, used ? "used" : "free");
 
     if (cluster < 2 || cluster >= emp->boot.cluster_count + 2)
         return EINVAL;
@@ -347,6 +365,9 @@ exfat_find_free_cluster(struct exfat_mount *emp, uint32_t start, uint32_t *clust
     uint32_t i, j, block;
     uint8_t *bitmap;
     int error;
+
+    if (bootverbose)
+        printf("exfat: [exfat_find_free_cluster] searching for free cluster starting at %u\n", start);
 
     /* Start searching from the given cluster */
     i = (start < 2) ? 0 : (start - 2);
@@ -391,6 +412,9 @@ exfat_find_free_cluster(struct exfat_mount *emp, uint32_t start, uint32_t *clust
 int
 exfat_update_bitmap(struct exfat_mount *emp, uint32_t cluster, int allocated)
 {
+    if (bootverbose)
+        printf("exfat: [exfat_update_bitmap] updating bitmap for cluster %u to %s\n", cluster, allocated ? "allocated" : "free");
+
     return exfat_set_cluster_status(emp, cluster, allocated);
 }
 
@@ -401,6 +425,9 @@ int
 exfat_validate_label(const char *label, size_t len)
 {
     size_t i, j;
+
+    if (bootverbose)
+        printf("exfat: [exfat_validate_label] validating volume label\n");
 
     /* Check length */
     if (len > EXFAT_LABEL_MAX_LEN)
@@ -432,6 +459,9 @@ exfat_generate_serial(void)
 {
     struct timespec ts;
     uint32_t date, time;
+
+    if (bootverbose)
+        printf("exfat: [exfat_generate_serial] generating new volume serial number\n");
 
     /* Get current time */
     getnanotime(&ts);
@@ -478,7 +508,7 @@ exfat_update_serial(struct exfat_mount *emp)
     emp->boot.volume_serial = boot->volume_serial;
 
     if (bootverbose)
-        printf("exfat: [%s] updating serial number\n", __func__);
+        printf("exfat: [exfat_update_serial] updating serial number\n");
 
     return 0;
 }
@@ -489,6 +519,9 @@ exfat_update_serial(struct exfat_mount *emp)
 void
 exfat_serial_to_string(uint32_t serial, char *str)
 {
+    if (bootverbose)
+        printf("exfat: [exfat_serial_to_string] converting serial number to string\n");
+
     snprintf(str, 12, "%04X-%04X",
              (serial >> 16) & 0xFFFF,
              serial & 0xFFFF);
@@ -503,6 +536,9 @@ exfat_update_volume_flags(struct exfat_mount *emp, uint16_t flags)
     struct buf *bp;
     struct exfat_boot_record *boot;
     int error;
+
+    if (bootverbose)
+        printf("exfat: [exfat_update_volume_flags] updating volume flags: 0x%04x\n", flags);
 
     /* Check for write access */
     if (emp->mp->mnt_flag & MNT_RDONLY)
@@ -540,7 +576,7 @@ int
 exfat_set_volume_dirty(struct exfat_mount *emp, int dirty)
 {
     if (bootverbose)
-        printf("exfat: [%s] marking volume %s\n", __func__, dirty ? "dirty" : "clean");
+        printf("exfat: [exfat_set_volume_dirty] marking volume as %s\n", dirty ? "dirty" : "clean");
 
     struct buf *bp;
     struct exfat_boot_record *bs;
@@ -550,7 +586,7 @@ exfat_set_volume_dirty(struct exfat_mount *emp, int dirty)
     error = bread(emp->devvp, 0, EXFAT_SECTOR_SIZE, NOCRED, &bp);
     if (error) {
         if (bootverbose)
-            printf("exfat: failed to read boot sector: %d\n", error);
+            printf("exfat: [exfat_set_volume_dirty] failed to read boot sector: %d\n", error);
         brelse(bp);
         return error;
     }
@@ -566,12 +602,12 @@ exfat_set_volume_dirty(struct exfat_mount *emp, int dirty)
     error = bwrite(bp);
     if (error) {
         if (bootverbose)
-            printf("exfat: failed to write boot sector: %d\n", error);
+            printf("exfat: [exfat_set_volume_dirty] failed to write boot sector: %d\n", error);
         return error;
     }
 
     if (bootverbose)
-        printf("exfat: volume marked %s successfully\n", 
+        printf("exfat: [exfat_set_volume_dirty] volume marked %s successfully\n", 
                dirty ? "dirty" : "clean");
 
     /* Update in-memory copy */
@@ -588,6 +624,9 @@ exfat_set_active_fat(struct exfat_mount *emp, int second_fat)
 {
     uint16_t flags = emp->boot.volume_flags;
 
+    if (bootverbose)
+        printf("exfat: [exfat_set_active_fat] setting active FAT to %d\n", second_fat ? 2 : 1);
+
     if (second_fat)
         flags |= EXFAT_VOL_ACTIVE_FAT;
     else
@@ -602,6 +641,9 @@ exfat_set_active_fat(struct exfat_mount *emp, int second_fat)
 int
 exfat_volume_is_dirty(struct exfat_mount *emp)
 {
+    if (bootverbose)
+        printf("exfat: [exfat_volume_is_dirty] checking volume dirty status\n");
+
     return (emp->boot.volume_flags & EXFAT_VOL_DIRTY) != 0;
 }
 
@@ -611,6 +653,9 @@ exfat_volume_is_dirty(struct exfat_mount *emp)
 int
 exfat_get_active_fat(struct exfat_mount *emp)
 {
+    if (bootverbose)
+        printf("exfat: [exfat_get_active_fat] getting active FAT number\n");
+
     return (emp->boot.volume_flags & EXFAT_VOL_ACTIVE_FAT) ? 1 : 0;
 }
 
@@ -621,6 +666,9 @@ void
 exfat_unix2exfat(struct timespec *ts, struct exfat_timespec *extime)
 {
     uint32_t days, secs, year, month, day, hour, min, sec;
+
+    if (bootverbose)
+        printf("exfat: [exfat_unix2exfat] converting Unix time to ExFAT time\n");
 
     /* Convert seconds since epoch to date/time */
     days = ts->tv_sec / 86400;
@@ -711,6 +759,9 @@ exfat_update_volume_time(struct exfat_mount *emp)
     struct exfat_timespec extime;
     int error;
 
+    if (bootverbose)
+        printf("exfat: [exfat_update_volume_time] updating volume time\n");
+
     /* Check for write access */
     if (emp->mp->mnt_flag & MNT_RDONLY)
         return EROFS;
@@ -742,7 +793,7 @@ int
 exfat_update_percent_in_use(struct exfat_mount *emp)
 {
     if (bootverbose)
-        printf("exfat: [%s] updating percent-in-use\n", __func__);
+        printf("exfat: [exfat_update_percent_in_use] updating volume usage statistics\n");
 
     struct buf *bp;
     uint32_t cluster;
@@ -773,7 +824,7 @@ exfat_update_percent_in_use(struct exfat_mount *emp)
     error = bread(emp->devvp, 0, EXFAT_SECTOR_SIZE, NOCRED, &bp);
     if (error) {
         if (bootverbose)
-            printf("exfat: failed to read boot sector: %d\n", error);
+            printf("exfat: [exfat_update_percent_in_use] failed to read boot sector: %d\n", error);
         brelse(bp);
         return error;
     }
@@ -783,12 +834,12 @@ exfat_update_percent_in_use(struct exfat_mount *emp)
     error = bwrite(bp);
     if (error) {
         if (bootverbose)
-            printf("exfat: failed to write boot sector: %d\n", error);
+            printf("exfat: [exfat_update_percent_in_use] failed to write boot sector: %d\n", error);
         return error;
     }
 
     if (bootverbose)
-        printf("exfat: percent-in-use updated to %u%%\n", percent);
+        printf("exfat: [exfat_update_percent_in_use] percent-in-use updated to %u%%\n", percent);
 
     return 0;
 }
@@ -797,7 +848,7 @@ static int
 exfat_read_boot_sector(struct exfat_mount *emp)
 {
     if (bootverbose)
-        printf("exfat: [%s] reading boot sector\n", __func__);
+        printf("exfat: [exfat_read_boot_sector] reading boot sector\n");
 
     struct buf *bp;
     int error;
@@ -806,7 +857,7 @@ exfat_read_boot_sector(struct exfat_mount *emp)
     error = bread(emp->devvp, 0, EXFAT_SECTOR_SIZE, NOCRED, &bp);
     if (error) {
         if (bootverbose)
-            printf("exfat: failed to read boot sector: %d\n", error);
+            printf("exfat: [exfat_read_boot_sector] failed to read boot sector: %d\n", error);
         brelse(bp);
         return error;
     }
@@ -818,7 +869,7 @@ exfat_read_boot_sector(struct exfat_mount *emp)
     error = exfat_verify_sector(bp);
     if (error) {
         if (bootverbose)
-            printf("exfat: boot sector checksum verification failed\n");
+            printf("exfat: [exfat_read_boot_sector] boot sector checksum verification failed\n");
         brelse(bp);
         return error;
     }
@@ -828,12 +879,12 @@ exfat_read_boot_sector(struct exfat_mount *emp)
     /* Check signature */
     if (memcmp(emp->boot.fs_name, "EXFAT   ", 8) != 0) {
         if (bootverbose)
-            printf("exfat: invalid filesystem signature\n");
+            printf("exfat: [exfat_read_boot_sector] invalid filesystem signature\n");
         return EINVAL;
     }
 
     if (bootverbose) {
-        printf("exfat: filesystem parameters:\n");
+        printf("exfat: [exfat_read_boot_sector] filesystem parameters:\n");
         printf("  bytes per sector: %u\n", 1 << emp->boot.bytes_per_sector_shift);
         printf("  sectors per cluster: %u\n", 1 << emp->boot.sectors_per_cluster_shift);
         printf("  number of FATs: %u\n", emp->boot.number_of_fats);
@@ -892,7 +943,7 @@ int
 exfat_handle_bad_sector(struct exfat_mount *emp, daddr_t sector)
 {
     if (bootverbose)
-        printf("exfat: [%s] handling bad sector %ju\n", __func__, (uintmax_t)sector);
+        printf("exfat: [exfat_handle_bad_sector] handling bad sector at %jd\n", (intmax_t)sector);
 
     /* Convert sector to cluster */
     uint32_t cluster;
@@ -903,7 +954,7 @@ exfat_handle_bad_sector(struct exfat_mount *emp, daddr_t sector)
         /* Mark cluster as bad */
         int error = exfat_mark_cluster_bad(emp, cluster);
         if (error && bootverbose)
-            printf("exfat: failed to mark cluster %u as bad: %d\n", 
+            printf("exfat: [exfat_handle_bad_sector] failed to mark cluster %u as bad: %d\n", 
                    cluster, error);
 
         /* Update error statistics */
@@ -928,6 +979,9 @@ exfat_check_sector(struct exfat_mount *emp, daddr_t sector)
     struct buf *bp;
     int error;
 
+    if (bootverbose)
+        printf("exfat: [exfat_check_sector] checking sector %jd\n", (intmax_t)sector);
+
     error = bread(emp->devvp, sector, EXFAT_SECTOR_SIZE, NOCRED, &bp);
     if (error) {
         brelse(bp);
@@ -947,6 +1001,9 @@ exfat_scan_cluster(struct exfat_mount *emp, uint32_t cluster)
     daddr_t sector;
     int i, bad_sectors = 0;
 
+    if (bootverbose)
+        printf("exfat: [exfat_scan_cluster] scanning cluster %u\n", cluster);
+
     sector = emp->boot.cluster_heap_offset +
              ((cluster - 2) << emp->boot.sectors_per_cluster_shift);
 
@@ -955,7 +1012,7 @@ exfat_scan_cluster(struct exfat_mount *emp, uint32_t cluster)
         if (exfat_check_sector(emp, sector + i)) {
             bad_sectors++;
             if (bootverbose)
-                printf("exfat: bad sector %jd in cluster %u\n",
+                printf("exfat: [exfat_scan_cluster] bad sector %jd in cluster %u\n",
                        (intmax_t)(sector + i), cluster);
         }
     }
@@ -963,7 +1020,7 @@ exfat_scan_cluster(struct exfat_mount *emp, uint32_t cluster)
     /* If any sectors are bad, mark the whole cluster as bad */
     if (bad_sectors > 0) {
         if (bootverbose)
-            printf("exfat: marking cluster %u as bad (%d bad sectors)\n",
+            printf("exfat: [exfat_scan_cluster] marking cluster %u as bad (%d bad sectors)\n",
                    cluster, bad_sectors);
         return exfat_mark_cluster_bad(emp, cluster);
     }
@@ -983,14 +1040,17 @@ exfat_scan_clusters(struct exfat_mount *emp, uint32_t start, uint32_t count)
     uint32_t cluster;
     int error = 0;
 
+    if (bootverbose)
+        printf("exfat: [exfat_scan_clusters] scanning %u clusters starting at %u\n", count, start);
+
     for (cluster = start; cluster < start + count; cluster++) {
         error = exfat_scan_cluster(emp, cluster);
         if (error && bootverbose)
-            printf("exfat: error scanning cluster %u: %d\n", cluster, error);
+            printf("exfat: [exfat_scan_clusters] error scanning cluster %u: %d\n", cluster, error);
     }
 
     if (bootverbose)
-        printf("exfat: [%s] scanning clusters %u-%u\n", __func__, start, start + count - 1);
+        printf("exfat: [exfat_scan_clusters] scanning clusters %u-%u\n", start, start + count - 1);
 
     return error;
 }
@@ -1002,7 +1062,7 @@ void
 exfat_cleanup_upcase(struct exfat_mount *emp)
 {
     if (bootverbose)
-        printf("exfat: cleaning up upcase table\n");
+        printf("exfat: [exfat_cleanup_upcase] cleaning up upcase table\n");
 
     /* Free upcase table if allocated */
     if (emp->upcase) {
@@ -1022,12 +1082,12 @@ exfat_init_upcase(struct exfat_mount *emp)
     uint32_t sector;
     int error;
 
+    if (bootverbose)
+        printf("exfat: [exfat_init_upcase] initializing upcase table\n");
+
     /* Read first sector of root directory */
     sector = emp->boot.cluster_heap_offset +
              ((emp->root_cluster - 2) << emp->boot.sectors_per_cluster_shift);
-
-    if (bootverbose)
-        printf("exfat: [%s] initializing upcase table\n", __func__);
 
     error = bread(emp->devvp, sector, EXFAT_SECTOR_SIZE, NOCRED, &bp);
     if (error) {
@@ -1050,7 +1110,7 @@ exfat_init_upcase(struct exfat_mount *emp)
     }
 
     if (bootverbose)
-        printf("exfat: found upcase table entry, first_cluster=%u, size=%ju\n",
+        printf("exfat: [exfat_init_upcase] found upcase table entry, first_cluster=%u, size=%ju\n",
                le32toh(entry->first_cluster), (uintmax_t)le64toh(entry->data_length));
 
     /* Store upcase table information */
@@ -1096,7 +1156,7 @@ exfat_init_upcase(struct exfat_mount *emp)
     }
 
     if (bootverbose)
-        printf("exfat: upcase table initialized (%ju bytes)\n", (uintmax_t)upcase_size);
+        printf("exfat: [exfat_init_upcase] upcase table initialized (%ju bytes)\n", (uintmax_t)upcase_size);
 
     return 0;
 }
@@ -1109,12 +1169,15 @@ exfat_read_rootdir(struct exfat_mount *emp)
     struct exfat_scan_ctx ctx;
     int error;
 
+    if (bootverbose)
+        printf("exfat: [exfat_read_rootdir] reading root directory\n");
+
     /* Read first sector of root directory */
     sector = emp->boot.cluster_heap_offset +
              ((emp->root_cluster - 2) << emp->boot.sectors_per_cluster_shift);
 
     if (bootverbose) {
-        printf("exfat: [%s] reading root directory:\n", __func__);
+        printf("exfat: [exfat_read_rootdir] reading root directory:\n");
         printf("  cluster_heap_offset: %u\n", emp->boot.cluster_heap_offset);
         printf("  root_cluster: %u\n", emp->root_cluster);
         printf("  sectors_per_cluster_shift: %u\n", emp->boot.sectors_per_cluster_shift);
@@ -1123,8 +1186,9 @@ exfat_read_rootdir(struct exfat_mount *emp)
 
     error = bread(emp->devvp, sector, EXFAT_SECTOR_SIZE, NOCRED, &bp);
     if (error) {
-        printf("exfat: failed to read root directory sector %u: %d\n",
-               sector, error);
+        if (bootverbose)
+            printf("exfat: [exfat_read_rootdir] failed to read root directory sector %u: %d\n",
+                   sector, error);
         return error;
     }
 
@@ -1137,7 +1201,7 @@ exfat_read_rootdir(struct exfat_mount *emp)
 
     /* Dump first 32 bytes of root directory */
     if (bootverbose) {
-        printf("exfat: [%s] first directory entry:\n", __func__);
+        printf("exfat: [exfat_read_rootdir] first directory entry:\n");
         printf("  type: 0x%02x\n", ctx.entry[0]);
         printf("  data:");
         for (int i = 0; i < 32; i++) {
@@ -1150,7 +1214,7 @@ exfat_read_rootdir(struct exfat_mount *emp)
     /* Scan for bitmap entry */
     error = exfat_scan_directory(emp->devvp, &ctx);
     if (bootverbose && error) {
-        printf("exfat: failed to initialize bitmap: %d\n", error);
+        printf("exfat: [%s] failed to initialize bitmap: %d\n", __func__, error);
         brelse(bp);
         return error;
     }

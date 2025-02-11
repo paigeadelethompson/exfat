@@ -35,7 +35,7 @@ int
 exfat_fat_read(struct exfat_mount *emp, uint32_t cluster, uint32_t *next)
 {
     if (bootverbose)
-        printf("exfat: [%s] reading FAT entry for cluster %u\n", __func__, cluster);
+        printf("exfat: [exfat_fat_read] reading FAT entry for cluster %u\n", cluster);
 
     struct buf *bp;
     uint32_t fat_offset, sector, offset;
@@ -48,14 +48,14 @@ exfat_fat_read(struct exfat_mount *emp, uint32_t cluster, uint32_t *next)
     error = bread(emp->devvp, sector, EXFAT_SECTOR_SIZE, NOCRED, &bp);
     if (error) {
         if (bootverbose)
-            printf("exfat: [%s] failed to read FAT sector: %d\n", __func__, error);
+            printf("exfat: [exfat_fat_read] failed to read FAT sector: %d\n", error);
         brelse(bp);
         return error;
     }
 
     *next = le32dec((uint8_t *)bp->b_data + offset);
     if (bootverbose)
-        printf("exfat: [%s] cluster %u -> %u\n", __func__, cluster, *next);
+        printf("exfat: [exfat_fat_read] cluster %u -> %u\n", cluster, *next);
 
     brelse(bp);
     return 0;
@@ -68,7 +68,7 @@ int
 exfat_fat_write(struct exfat_mount *emp, uint32_t cluster, uint32_t next)
 {
     if (bootverbose)
-        printf("exfat: [%s] writing FAT entry for cluster %u -> %u\n", __func__, cluster, next);
+        printf("exfat: [exfat_fat_write] writing FAT entry for cluster %u -> %u\n", cluster, next);
 
     struct buf *bp;
     uint32_t fat_offset, sector, offset;
@@ -81,7 +81,7 @@ exfat_fat_write(struct exfat_mount *emp, uint32_t cluster, uint32_t next)
     error = bread(emp->devvp, sector, EXFAT_SECTOR_SIZE, NOCRED, &bp);
     if (error) {
         if (bootverbose)
-            printf("exfat: [%s] failed to read FAT sector: %d\n", __func__, error);
+            printf("exfat: [exfat_fat_write] failed to read FAT sector: %d\n", error);
         brelse(bp);
         return error;
     }
@@ -91,12 +91,12 @@ exfat_fat_write(struct exfat_mount *emp, uint32_t cluster, uint32_t next)
 
     if (error) {
         if (bootverbose)
-            printf("exfat: [%s] failed to write FAT sector: %d\n", __func__, error);
+            printf("exfat: [exfat_fat_write] failed to write FAT sector: %d\n", error);
         return error;
     }
 
     if (bootverbose)
-        printf("exfat: [%s] FAT entry written successfully\n", __func__);
+        printf("exfat: [exfat_fat_write] FAT entry written successfully\n");
 
     return 0;
 }
@@ -108,7 +108,7 @@ static int
 exfat_find_free_cluster(struct exfat_mount *emp, uint32_t *cluster)
 {
     if (bootverbose)
-        printf("exfat: [%s] searching for free cluster starting at %u\n", __func__, emp->boot.cluster_heap_offset - emp->bitmap_sectors);
+        printf("exfat: [exfat_find_free_cluster] searching for free cluster starting at %u\n", emp->boot.cluster_heap_offset - emp->bitmap_sectors);
 
     struct buf *bp;
     uint32_t sector, bit, byte;
@@ -121,7 +121,7 @@ exfat_find_free_cluster(struct exfat_mount *emp, uint32_t *cluster)
                      EXFAT_SECTOR_SIZE, NOCRED, &bp);
         if (error) {
             if (bootverbose)
-                printf("exfat: [%s] failed to read bitmap sector: %d\n", __func__, error);
+                printf("exfat: [exfat_find_free_cluster] failed to read bitmap sector: %d\n", error);
             brelse(bp);
             return error;
         }
@@ -137,7 +137,7 @@ exfat_find_free_cluster(struct exfat_mount *emp, uint32_t *cluster)
                         ((uint8_t *)bp->b_data)[byte] |= mask;
                         error = bwrite(bp);
                         if (bootverbose)
-                            printf("exfat: [%s] found free cluster %u\n", __func__, *cluster);
+                            printf("exfat: [exfat_find_free_cluster] found free cluster %u\n", *cluster);
                         return error;
                     }
                 }
@@ -147,7 +147,7 @@ exfat_find_free_cluster(struct exfat_mount *emp, uint32_t *cluster)
     }
 
     if (bootverbose)
-        printf("exfat: [%s] no free clusters found\n", __func__);
+        printf("exfat: [exfat_find_free_cluster] no free clusters found\n");
     return ENOSPC;
 }
 
@@ -183,7 +183,7 @@ exfat_bitmap_set(struct exfat_mount *emp, uint32_t cluster, int used)
 
     error = bwrite(bp);
     if (bootverbose)
-        printf("exfat: [%s] setting bitmap entry for cluster %u to %s\n", __func__, cluster, used ? "used" : "free");
+        printf("exfat: [exfat_bitmap_set] setting bitmap entry for cluster %u to %s\n", cluster, used ? "used" : "free");
     return error;
 }
 
@@ -194,18 +194,18 @@ int
 exfat_cluster_alloc(struct exfat_mount *emp, uint32_t *cluster)
 {
     if (bootverbose)
-        printf("exfat: [%s] allocating new cluster\n", __func__);
+        printf("exfat: [exfat_cluster_alloc] allocating new cluster\n");
     int error;
 
     error = exfat_find_free_cluster(emp, cluster);
     if (error) {
         if (bootverbose)
-            printf("exfat: [%s] failed to find free cluster: %d\n", __func__, error);
+            printf("exfat: [exfat_cluster_alloc] failed to find free cluster: %d\n", error);
         return error;
     }
 
     if (bootverbose)
-        printf("exfat: [%s] allocated cluster %d\n", __func__, *cluster);
+        printf("exfat: [exfat_cluster_alloc] allocated cluster %d\n", *cluster);
     return 0;
 }
 
@@ -216,7 +216,7 @@ int
 exfat_cluster_link(struct exfat_mount *emp, uint32_t current, uint32_t next)
 {
     if (bootverbose)
-        printf("exfat: [%s] linking cluster %u -> %u\n", __func__, current, next);
+        printf("exfat: [exfat_cluster_link] linking cluster %u -> %u\n", current, next);
     return exfat_fat_write(emp, current, next);
 }
 
@@ -227,7 +227,7 @@ int
 exfat_cluster_free(struct exfat_mount *emp, uint32_t cluster)
 {
     if (bootverbose)
-        printf("exfat: [%s] freeing cluster %u\n", __func__, cluster);
+        printf("exfat: [exfat_cluster_free] freeing cluster %u\n", cluster);
     uint32_t next;
     int error;
 
@@ -235,7 +235,7 @@ exfat_cluster_free(struct exfat_mount *emp, uint32_t cluster)
         error = exfat_fat_read(emp, cluster, &next);
         if (error) {
             if (bootverbose)
-                printf("exfat: [%s] error reading FAT entry: %d\n", __func__, error);
+                printf("exfat: [exfat_cluster_free] error reading FAT entry: %d\n", error);
             return error;
         }
 
@@ -263,7 +263,7 @@ exfat_cluster_extend(struct exfat_mount *emp, uint32_t *cluster)
     int error;
 
     if (bootverbose)
-        printf("exfat: [%s] extending cluster chain from %u\n", __func__, *cluster);
+        printf("exfat: [exfat_cluster_extend] extending cluster chain from %u\n", *cluster);
 
     /* Allocate new cluster */
     error = exfat_cluster_alloc(emp, &new_cluster);
@@ -293,7 +293,7 @@ exfat_cluster_next(struct exfat_mount *emp, uint32_t current, uint32_t *next)
     int error;
 
     if (bootverbose)
-        printf("exfat: [%s] getting next cluster after %u\n", __func__, current);
+        printf("exfat: [exfat_cluster_next] getting next cluster after %u\n", current);
 
     /* Read FAT entry */
     error = exfat_fat_read(emp, current, &fat_entry);
@@ -322,7 +322,7 @@ exfat_cluster_alloc_sequence(struct exfat_mount *emp, uint32_t count, uint32_t *
     int error;
 
     if (bootverbose)
-        printf("exfat: [%s] allocating sequence of %u clusters\n", __func__, count);
+        printf("exfat: [exfat_cluster_alloc_sequence] allocating sequence of %u clusters\n", count);
 
     /* Allocate first cluster */
     error = exfat_cluster_alloc(emp, &current);
@@ -360,7 +360,7 @@ exfat_cluster_alloc_sequence(struct exfat_mount *emp, uint32_t count, uint32_t *
     }
 
     if (bootverbose)
-        printf("exfat: [%s] allocated cluster sequence starting at %u\n", __func__, *first_cluster);
+        printf("exfat: [exfat_cluster_alloc_sequence] allocated cluster sequence starting at %u\n", *first_cluster);
 
     return 0;
 }
@@ -374,13 +374,13 @@ exfat_mark_cluster_bad(struct exfat_mount *emp, uint32_t cluster)
     int error;
 
     if (bootverbose)
-        printf("exfat: [%s] marking cluster %u as bad\n", __func__, cluster);
+        printf("exfat: [exfat_mark_cluster_bad] marking cluster %u as bad\n", cluster);
 
     /* First mark it as free in bitmap */
     error = exfat_bitmap_set(emp, cluster, 0);
     if (error) {
         if (bootverbose)
-            printf("exfat: [%s] failed to update bitmap for bad cluster: %d\n", __func__, error);
+            printf("exfat: [exfat_mark_cluster_bad] failed to update bitmap for bad cluster: %d\n", error);
         return error;
     }
 
@@ -388,12 +388,12 @@ exfat_mark_cluster_bad(struct exfat_mount *emp, uint32_t cluster)
     error = exfat_fat_write(emp, cluster, EXFAT_CLUSTER_BAD);
     if (error) {
         if (bootverbose)
-            printf("exfat: [%s] failed to mark cluster as bad in FAT: %d\n", __func__, error);
+            printf("exfat: [exfat_mark_cluster_bad] failed to mark cluster as bad in FAT: %d\n", error);
         return error;
     }
 
     if (bootverbose)
-        printf("exfat: [%s] cluster %u marked as bad\n", __func__, cluster);
+        printf("exfat: [exfat_mark_cluster_bad] cluster %u marked as bad\n", cluster);
 
     return 0;
 } 

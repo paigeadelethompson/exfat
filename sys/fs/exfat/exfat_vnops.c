@@ -44,7 +44,7 @@ static int
 exfat_read_cluster(struct vnode *vp, struct exfat_mount *emp, uint32_t cluster, char *buffer)
 {
     if (bootverbose)
-        printf("exfat: [%s] reading cluster %u\n", __func__, cluster);
+        printf("exfat: [exfat_read_cluster] reading cluster %u\n", cluster);
 
     struct buf *bp;
     uint32_t sector;
@@ -124,7 +124,7 @@ static int
 exfat_write_cluster(struct vnode *vp, struct exfat_mount *emp, uint32_t cluster, char *buffer)
 {
     if (bootverbose)
-        printf("exfat: [%s] writing cluster %u\n", __func__, cluster);
+        printf("exfat: [exfat_write_cluster] writing cluster %u\n", cluster);
 
     struct buf *bp;
     uint32_t sector;
@@ -201,7 +201,7 @@ static int
 exfat_read(struct vop_read_args *ap)
 {
     if (bootverbose)
-        printf("exfat: [%s] reading file, offset=%ju, size=%ju\n", __func__, 
+        printf("exfat: [exfat_read] reading file, offset=%ju, size=%ju\n", 
                (uintmax_t)ap->a_uio->uio_offset, (uintmax_t)ap->a_uio->uio_resid);
 
     struct vnode *vp = ap->a_vp;
@@ -304,7 +304,7 @@ static int
 exfat_getattr(struct vop_getattr_args *ap)
 {
     if (bootverbose)
-        printf("exfat: [%s] getting attributes for vnode %p\n", __func__, ap->a_vp);
+        printf("exfat: [exfat_getattr] getting attributes for vnode %p\n", ap->a_vp);
 
     struct vnode *vp = ap->a_vp;
     struct vattr *vap = ap->a_vap;
@@ -351,7 +351,7 @@ exfat_inactive(struct vop_inactive_args *ap)
     struct exfat_mount *emp = VFSTOEXFAT(vp->v_mount);
 
     if (bootverbose)
-        printf("exfat: [%s] deactivating vnode %p\n", __func__, vp);
+        printf("exfat: [exfat_inactive] deactivating vnode %p\n", vp);
 
     mtx_lock(&emp->hash_mtx.mtx);
     LIST_REMOVE(ep, next);
@@ -374,7 +374,7 @@ exfat_reclaim(struct vop_reclaim_args *ap)
     struct exfat_mount *emp = VFSTOEXFAT(vp->v_mount);
 
     if (bootverbose)
-        printf("exfat: [%s] reclaiming vnode %p\n", __func__, vp);
+        printf("exfat: [exfat_reclaim] reclaiming vnode %p\n", vp);
 
     mtx_lock(&emp->hash_mtx.mtx);
     LIST_REMOVE(ep, next);
@@ -407,7 +407,7 @@ static int
 exfat_write(struct vop_write_args *ap)
 {
     if (bootverbose)
-        printf("exfat: [%s] writing file, offset=%ju, size=%ju\n", __func__, 
+        printf("exfat: [exfat_write] writing file, offset=%ju, size=%ju\n", 
                (uintmax_t)ap->a_uio->uio_offset, (uintmax_t)ap->a_uio->uio_resid);
 
     struct vnode *vp = ap->a_vp;
@@ -512,7 +512,7 @@ exfat_create(struct vop_create_args *ap)
     int error;
 
     if (bootverbose)
-        printf("exfat: [%s] creating file '%s'\n", __func__, cnp->cn_nameptr);
+        printf("exfat: [exfat_create] creating file '%s'\n", cnp->cn_nameptr);
 
     /* Check if mounted read-only */
     if (dvp->v_mount->mnt_flag & MNT_RDONLY)
@@ -563,7 +563,7 @@ exfat_mkdir(struct vop_mkdir_args *ap)
     int error;
 
     if (bootverbose)
-        printf("exfat: [%s] creating directory '%s'\n", __func__, cnp->cn_nameptr);
+        printf("exfat: [exfat_mkdir] creating directory '%s'\n", cnp->cn_nameptr);
 
     /* Check if mounted read-only */
     if (dvp->v_mount->mnt_flag & MNT_RDONLY)
@@ -620,20 +620,20 @@ exfat_remove(struct vop_remove_args *ap)
     int error;
 
     if (bootverbose)
-        printf("exfat: [%s] removing file at cluster %u\n", __func__, ep->cluster);
+        printf("exfat: [exfat_remove] removing file at cluster %u\n", ep->cluster);
 
     /* Find the directory entry */
     error = exfat_scan_directory(dvp, &ctx);
     if (error) {
         if (bootverbose)
-            printf("exfat: failed to scan directory: %d\n", error);
+            printf("exfat: [exfat_remove] failed to scan directory: %d\n", error);
         return error;
     }
 
     while ((error = exfat_next_dirent(&ctx, &es)) == 0) {
         if (es.stream.first_cluster == ep->cluster) {
             if (bootverbose)
-                printf("exfat: found entry to remove at offset %jd\n", 
+                printf("exfat: [exfat_remove] found entry to remove at offset %jd\n", 
                        (intmax_t)ctx.offset);
             /* Found it - remove the entry */
             error = exfat_remove_entry(dvp, &es, ctx.offset);
@@ -647,7 +647,7 @@ exfat_remove(struct vop_remove_args *ap)
     }
 
     if (bootverbose)
-        printf("exfat: entry not found\n");
+        printf("exfat: [exfat_remove] entry not found\n");
     exfat_scan_cleanup(&ctx);
     return ENOENT;
 }
@@ -667,20 +667,20 @@ exfat_rmdir(struct vop_rmdir_args *ap)
     int error;
 
     if (bootverbose)
-        printf("exfat: [%s] removing directory at cluster %u\n", __func__, ep->cluster);
+        printf("exfat: [exfat_rmdir] removing directory at cluster %u\n", ep->cluster);
 
     /* Check if directory is empty */
     error = exfat_scan_directory(vp, &ctx);
     if (error) {
         if (bootverbose)
-            printf("exfat: failed to scan directory: %d\n", error);
+            printf("exfat: [exfat_rmdir] failed to scan directory: %d\n", error);
         return error;
     }
 
     error = exfat_next_dirent(&ctx, &es);
     if (error != ENOENT) {
         if (bootverbose)
-            printf("exfat: directory not empty\n");
+            printf("exfat: [exfat_rmdir] directory not empty\n");
         /* Directory not empty */
         exfat_scan_cleanup(&ctx);
         return ENOTEMPTY;
@@ -727,13 +727,13 @@ exfat_rename(struct vop_rename_args *ap)
     int error;
 
     if (bootverbose)
-        printf("exfat: [%s] renaming file at cluster %u to '%s'\n", __func__, 
+        printf("exfat: [exfat_rename] renaming file at cluster %u to '%s'\n", 
                fep->cluster, cnp->cn_nameptr);
 
     /* Check for cross-device rename */
     if (fdvp->v_mount != tdvp->v_mount) {
         if (bootverbose)
-            printf("exfat: cross-device rename not allowed\n");
+            printf("exfat: [exfat_rename] cross-device rename not allowed\n");
         return EXDEV;
     }
 
@@ -743,7 +743,7 @@ exfat_rename(struct vop_rename_args *ap)
     /* If target exists, return error */
     if (tvp) {
         if (bootverbose)
-            printf("exfat: target already exists\n");
+            printf("exfat: [exfat_rename] target already exists\n");
         return EEXIST;
     }
 
@@ -751,21 +751,21 @@ exfat_rename(struct vop_rename_args *ap)
     error = exfat_scan_directory(fdvp, &ctx);
     if (error) {
         if (bootverbose)
-            printf("exfat: failed to scan source directory: %d\n", error);
+            printf("exfat: [exfat_rename] failed to scan source directory: %d\n", error);
         return error;
     }
 
     while ((error = exfat_next_dirent(&ctx, &es)) == 0) {
         if (es.stream.first_cluster == fep->cluster) {
             if (bootverbose)
-                printf("exfat: found source entry at offset %jd\n", 
+                printf("exfat: [exfat_rename] found source entry at offset %jd\n", 
                        (intmax_t)ctx.offset);
 
             /* Remove the old entry */
             error = exfat_remove_entry(fdvp, &es, ctx.offset);
             if (error) {
                 if (bootverbose)
-                    printf("exfat: failed to remove old entry: %d\n", error);
+                    printf("exfat: [exfat_rename] failed to remove old entry: %d\n", error);
                 exfat_scan_cleanup(&ctx);
                 return error;
             }
@@ -776,7 +776,7 @@ exfat_rename(struct vop_rename_args *ap)
                                      es.file.file_attributes, &ts, &new_es);
             if (error) {
                 if (bootverbose)
-                    printf("exfat: failed to create new entry: %d\n", error);
+                    printf("exfat: [exfat_rename] failed to create new entry: %d\n", error);
                 /* Try to restore the old entry */
                 exfat_create_entry(fdvp, ap->a_fcnp->cn_nameptr,
                                  ap->a_fcnp->cn_namelen,
@@ -786,7 +786,7 @@ exfat_rename(struct vop_rename_args *ap)
             }
 
             if (bootverbose)
-                printf("exfat: rename successful\n");
+                printf("exfat: [exfat_rename] rename successful\n");
 
             exfat_scan_cleanup(&ctx);
             return 0;
@@ -794,7 +794,7 @@ exfat_rename(struct vop_rename_args *ap)
     }
 
     if (bootverbose)
-        printf("exfat: source entry not found\n");
+        printf("exfat: [exfat_rename] source entry not found\n");
     exfat_scan_cleanup(&ctx);
     return ENOENT;
 }
@@ -803,12 +803,12 @@ static int
 exfat_cachedlookup(struct vop_cachedlookup_args *ap)
 {
     if (bootverbose)
-        printf("exfat: cached lookup for '%s' in directory %p\n",
+        printf("exfat: [exfat_cachedlookup] cached lookup for '%s' in directory %p\n",
                ap->a_cnp->cn_nameptr, ap->a_dvp);
 
     int error = exfat_lookup_node(ap->a_dvp, ap->a_cnp, ap->a_vpp);
     if (error && bootverbose)
-        printf("exfat: lookup failed: %d\n", error);
+        printf("exfat: [exfat_cachedlookup] lookup failed: %d\n", error);
     return error;
 }
 
@@ -874,7 +874,7 @@ static int
 exfat_open(struct vop_open_args *ap)
 {
     if (bootverbose)
-        printf("exfat: [%s] opening vnode %p, flags 0x%x\n", __func__, ap->a_vp, ap->a_mode);
+        printf("exfat: [exfat_open] opening vnode %p, flags 0x%x\n", ap->a_vp, ap->a_mode);
 
     struct vnode *vp = ap->a_vp;
     int flags = ap->a_mode;
@@ -900,7 +900,7 @@ static int
 exfat_close(struct vop_close_args *ap)
 {
     if (bootverbose)
-        printf("exfat: [%s] closing vnode %p\n", __func__, ap->a_vp);
+        printf("exfat: [exfat_close] closing vnode %p\n", ap->a_vp);
 
     struct vnode *vp = ap->a_vp;
 
@@ -967,8 +967,7 @@ static int
 exfat_strategy(struct vop_strategy_args *ap)
 {
     if (bootverbose)
-        printf("exfat: [%s] strategy for vnode %p, block %jd\n", __func__, 
-               ap->a_vp, (intmax_t)ap->a_bp->b_blkno);
+        printf("exfat: [exfat_strategy] strategy for vnode %p\n", ap->a_vp);
 
     struct vnode *vp = ap->a_vp;
     struct buf *bp = ap->a_bp;

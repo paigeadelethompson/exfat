@@ -40,8 +40,7 @@ static int exfat_write_entry(struct exfat_mount *emp, struct exfat_node *node);
 int
 exfat_scan_directory(struct vnode *vp, struct exfat_scan_ctx *ctx)
 {
-    if (bootverbose)
-        printf("exfat: [%s] scanning directory vnode %p\n", __func__, vp);
+    printf("exfat: [exfat_scan_directory] scanning directory vnode %p\n", vp);
 
     struct exfat_mount *emp = VTOVFSMP(vp);
     struct exfat_node *ep = VTOE(vp);
@@ -77,8 +76,7 @@ exfat_scan_directory(struct vnode *vp, struct exfat_scan_ctx *ctx)
 int
 exfat_next_dirent(struct exfat_scan_ctx *ctx, struct exfat_direntry_set *es)
 {
-    if (bootverbose)
-        printf("exfat: [%s] reading next directory entry at offset %u\n", __func__, ctx->offset);
+    printf("exfat: [exfat_read_next_entry] reading next directory entry at offset %u\n", ctx->offset);
 
     struct buf *bp;
     uint32_t sector;
@@ -133,13 +131,12 @@ exfat_next_dirent(struct exfat_scan_ctx *ctx, struct exfat_direntry_set *es)
 
     /* Read file entry */
     if (ctx->entry[ctx->offset] != EXFAT_ENTRY_FILE) {
-        if (bootverbose)
-            printf("exfat: [%s] invalid directory entry type: %d\n", __func__, ctx->entry[ctx->offset]);
+        printf("exfat: [exfat_read_next_entry] invalid directory entry type: %d\n", ctx->entry[ctx->offset]);
         return EINVAL;
     }
 
     if (bootverbose)
-        printf("exfat: [%s] reading file entry at offset %u\n", __func__, ctx->offset);
+        printf("exfat: [exfat_read_next_entry] reading file entry at offset %u\n", ctx->offset);
 
     memcpy(&es->file, ctx->entry + ctx->offset, sizeof(struct exfat_entry_file));
     ctx->offset += sizeof(struct exfat_entry_file);
@@ -198,8 +195,7 @@ int
 exfat_name_match(struct exfat_mount *emp, const struct exfat_direntry_set *es,
                 const char *name, size_t len)
 {
-    if (bootverbose)
-        printf("exfat: [%s] comparing name '%s' (len %zu)\n", __func__, name, len);
+    printf("exfat: [exfat_compare_name] comparing name '%s' (len %zu)\n", name, len);
 
     uint16_t uname[256];
     size_t ulen, i;
@@ -213,14 +209,14 @@ exfat_name_match(struct exfat_mount *emp, const struct exfat_direntry_set *es,
     if (ulen != es->stream.name_length) {
         if (bootverbose)
             printf("exfat: [%s] name length mismatch (%zu != %u)\n", 
-                   __func__, ulen, es->stream.name_length);
+                   "exfat_compare_name", ulen, es->stream.name_length);
         return 0;
     }
 
     int match = (exfat_name_compare(emp, uname, es->name[0].name, 
                                    MIN(ulen, es->stream.name_length)) == 0);
     if (bootverbose)
-        printf("exfat: [%s] name comparison %s\n", __func__, match ? "matched" : "failed");
+        printf("exfat: [exfat_compare_name] name comparison %s\n", match ? "matched" : "failed");
 
     return match;
 }

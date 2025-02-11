@@ -28,7 +28,7 @@ int
 exfat_utf8_to_utf16(const char *utf8, uint16_t *utf16, size_t outlen, size_t *outused)
 {
     if (bootverbose)
-        printf("exfat: [%s] converting UTF-8 string '%s' to UTF-16\n", __func__, utf8);
+        printf("exfat: [exfat_utf8_to_utf16] converting UTF-8 string '%s' to UTF-16\n", utf8);
 
     uint32_t codepoint;
     const uint8_t *s = (const uint8_t *)utf8;
@@ -80,7 +80,7 @@ exfat_utf8_to_utf16(const char *utf8, uint16_t *utf16, size_t outlen, size_t *ou
         return E2BIG;
 
     if (bootverbose)
-        printf("exfat: [%s] UTF-8 conversion complete, used %zu bytes\n", __func__, *outused);
+        printf("exfat: [exfat_utf8_to_utf16] UTF-8 conversion complete, used %zu bytes\n", *outused);
 
     return 0;
 }
@@ -92,7 +92,7 @@ int
 exfat_utf16_to_utf8(const uint16_t *utf16, size_t utf16len, char *utf8, size_t outlen, size_t *outused)
 {
     if (bootverbose)
-        printf("exfat: [%s] converting UTF-16 string to UTF-8 (len %zu)\n", __func__, utf16len);
+        printf("exfat: [exfat_utf16_to_utf8] converting UTF-16 string to UTF-8 (len %zu)\n", utf16len);
 
     size_t i = 0;
     uint32_t codepoint;
@@ -154,7 +154,7 @@ exfat_utf16_to_utf8(const uint16_t *utf16, size_t utf16len, char *utf8, size_t o
     /* outused already contains the output length */
 
     if (bootverbose)
-        printf("exfat: [%s] UTF-16 conversion complete, used %zu bytes\n", __func__, *outused);
+        printf("exfat: [exfat_utf16_to_utf8] UTF-16 conversion complete, used %zu bytes\n", *outused);
 
     return 0;
 } 

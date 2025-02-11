@@ -36,7 +36,7 @@ int
 exfat_lookup_node(struct vnode *dvp, struct componentname *cnp, struct vnode **vpp)
 {
     if (bootverbose)
-        printf("exfat: [%s] looking up '%s' in directory %p\n", __func__, cnp->cn_nameptr, dvp);
+        printf("exfat: [exfat_lookup_node] looking up '%s' in directory %p\n", cnp->cn_nameptr, dvp);
 
     struct exfat_mount *emp = VTOVFSMP(dvp);
     struct exfat_scan_ctx ctx;
@@ -47,7 +47,7 @@ exfat_lookup_node(struct vnode *dvp, struct componentname *cnp, struct vnode **v
     error = exfat_scan_directory(dvp, &ctx);
     if (error) {
         if (bootverbose)
-            printf("exfat: [%s] failed to scan directory: %d\n", __func__, error);
+            printf("exfat: [exfat_lookup_node] failed to scan directory: %d\n", error);
         return error;
     }
 
@@ -55,7 +55,7 @@ exfat_lookup_node(struct vnode *dvp, struct componentname *cnp, struct vnode **v
     while ((error = exfat_next_dirent(&ctx, &es)) == 0) {
         if (exfat_name_match(emp, &es, cnp->cn_nameptr, cnp->cn_namelen)) {
             if (bootverbose)
-                printf("exfat: [%s] found matching entry, cluster %u\n", __func__, 
+                printf("exfat: [exfat_lookup_node] found matching entry, cluster %u\n", 
                        es.stream.first_cluster);
 
             /* Found it - get or create vnode */
@@ -68,7 +68,7 @@ exfat_lookup_node(struct vnode *dvp, struct componentname *cnp, struct vnode **v
     }
 
     if (bootverbose)
-        printf("exfat: [%s] entry not found\n", __func__);
+        printf("exfat: [exfat_lookup_node] entry not found\n");
 
     exfat_scan_cleanup(&ctx);
     return ENOENT;
