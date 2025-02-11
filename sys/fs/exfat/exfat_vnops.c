@@ -502,9 +502,6 @@ out:
 static int
 exfat_create(struct vop_create_args *ap)
 {
-    if (bootverbose)
-        printf("exfat: [%s] creating file '%s'\n", __func__, cnp->cn_nameptr);
-
     struct vnode *dvp = ap->a_dvp;
     struct vnode **vpp = ap->a_vpp;
     struct componentname *cnp = ap->a_cnp;
@@ -513,6 +510,9 @@ exfat_create(struct vop_create_args *ap)
     struct exfat_direntry_set es;
     uint32_t cluster;
     int error;
+
+    if (bootverbose)
+        printf("exfat: [%s] creating file '%s'\n", __func__, cnp->cn_nameptr);
 
     /* Check if mounted read-only */
     if (dvp->v_mount->mnt_flag & MNT_RDONLY)
@@ -553,9 +553,6 @@ exfat_create(struct vop_create_args *ap)
 static int
 exfat_mkdir(struct vop_mkdir_args *ap)
 {
-    if (bootverbose)
-        printf("exfat: [%s] creating directory '%s'\n", __func__, cnp->cn_nameptr);
-
     struct vnode *dvp = ap->a_dvp;
     struct vnode **vpp = ap->a_vpp;
     struct componentname *cnp = ap->a_cnp;
@@ -564,6 +561,9 @@ exfat_mkdir(struct vop_mkdir_args *ap)
     struct exfat_direntry_set es;
     uint32_t cluster;
     int error;
+
+    if (bootverbose)
+        printf("exfat: [%s] creating directory '%s'\n", __func__, cnp->cn_nameptr);
 
     /* Check if mounted read-only */
     if (dvp->v_mount->mnt_flag & MNT_RDONLY)
@@ -611,9 +611,6 @@ exfat_mkdir(struct vop_mkdir_args *ap)
 static int
 exfat_remove(struct vop_remove_args *ap)
 {
-    if (bootverbose)
-        printf("exfat: [%s] removing file at cluster %u\n", __func__, ep->cluster);
-
     struct vnode *dvp = ap->a_dvp;
     struct vnode *vp = ap->a_vp;
     struct exfat_mount *emp = VTOVFSMP(dvp);
@@ -621,6 +618,9 @@ exfat_remove(struct vop_remove_args *ap)
     struct exfat_scan_ctx ctx;
     struct exfat_direntry_set es;
     int error;
+
+    if (bootverbose)
+        printf("exfat: [%s] removing file at cluster %u\n", __func__, ep->cluster);
 
     /* Find the directory entry */
     error = exfat_scan_directory(dvp, &ctx);
@@ -658,9 +658,6 @@ exfat_remove(struct vop_remove_args *ap)
 static int
 exfat_rmdir(struct vop_rmdir_args *ap)
 {
-    if (bootverbose)
-        printf("exfat: [%s] removing directory at cluster %u\n", __func__, ep->cluster);
-
     struct vnode *dvp = ap->a_dvp;
     struct vnode *vp = ap->a_vp;
     struct exfat_mount *emp = VTOVFSMP(dvp);
@@ -668,6 +665,9 @@ exfat_rmdir(struct vop_rmdir_args *ap)
     struct exfat_scan_ctx ctx;
     struct exfat_direntry_set es;
     int error;
+
+    if (bootverbose)
+        printf("exfat: [%s] removing directory at cluster %u\n", __func__, ep->cluster);
 
     /* Check if directory is empty */
     error = exfat_scan_directory(vp, &ctx);
@@ -715,19 +715,20 @@ exfat_rmdir(struct vop_rmdir_args *ap)
 static int
 exfat_rename(struct vop_rename_args *ap)
 {
-    if (bootverbose)
-        printf("exfat: [%s] renaming file at cluster %u to '%s'\n", __func__, 
-               fep->cluster, cnp->cn_nameptr);
-
     struct vnode *fdvp = ap->a_fdvp;    /* from directory vnode */
     struct vnode *fvp = ap->a_fvp;      /* from file/dir vnode */
     struct vnode *tdvp = ap->a_tdvp;    /* to directory vnode */
     struct vnode *tvp = ap->a_tvp;      /* to file/dir vnode (if exists) */
     struct exfat_node *fep = VTOE(fvp);
+    struct componentname *cnp = ap->a_tcnp;  /* target component name */
     struct exfat_scan_ctx ctx;
     struct exfat_direntry_set es, new_es;
     struct timespec ts;
     int error;
+
+    if (bootverbose)
+        printf("exfat: [%s] renaming file at cluster %u to '%s'\n", __func__, 
+               fep->cluster, cnp->cn_nameptr);
 
     /* Check for cross-device rename */
     if (fdvp->v_mount != tdvp->v_mount) {
