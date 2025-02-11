@@ -15,8 +15,51 @@
  *    documentation and/or other materials provided with the distribution.
  */
 
-#ifndef _FS_EXFAT_VNODEOPS_H_
-#define _FS_EXFAT_VNODEOPS_H_
+#ifndef _EXFAT_VNOPS_H_
+#define _EXFAT_VNOPS_H_
+
+#include <sys/param.h>
+#include <sys/systm.h>
+#include <sys/namei.h>
+#include <sys/kernel.h>
+#include <sys/vnode.h>
+
+/* VFS vnode operations */
+int exfat_lookup(struct vop_lookup_args *);
+int exfat_cachedlookup(struct vop_cachedlookup_args *);
+int exfat_create(struct vop_create_args *);
+int exfat_mkdir(struct vop_mkdir_args *);
+int exfat_remove(struct vop_remove_args *);
+int exfat_rmdir(struct vop_rmdir_args *);
+int exfat_read(struct vop_read_args *);
+int exfat_write(struct vop_write_args *);
+int exfat_getattr(struct vop_getattr_args *);
+int exfat_readdir(struct vop_readdir_args *);
+int exfat_inactive(struct vop_inactive_args *);
+int exfat_reclaim(struct vop_reclaim_args *);
+int exfat_rename(struct vop_rename_args *);
+int exfat_access_wrapper(struct vop_access_args *);
+int exfat_open(struct vop_open_args *);
+int exfat_close(struct vop_close_args *);
+int exfat_fsync(struct vop_fsync_args *);
+int exfat_strategy(struct vop_strategy_args *);
+
+int exfat_read_cluster(struct vnode *vp, struct exfat_mount *emp, uint32_t cluster, char *buffer);
+int exfat_write_cluster(struct vnode *vp, struct exfat_mount *emp, uint32_t cluster, char *buffer);
+
+/* Helper functions */
+int exfat_access(struct vnode *, accmode_t, struct ucred *, struct thread *);
+int exfat_dir_read(struct vnode *, struct uio *, struct ucred *);
+int exfat_dir_write(struct vnode *, struct uio *, struct ucred *);
+int exfat_file_read(struct vnode *, struct uio *, struct ucred *);
+int exfat_file_write(struct vnode *, struct uio *, struct ucred *);
+
+static vop_lookup_t __unused exfat_lookup;
+static vop_read_t       exfat_read;
+static vop_write_t      exfat_write;
+static vop_getattr_t    exfat_getattr;
+static vop_inactive_t   exfat_inactive;
+static vop_reclaim_t    exfat_reclaim;
 
 struct vop_vector exfat_vnodeops = {
     .vop_default    = &default_vnodeops,
@@ -40,4 +83,4 @@ struct vop_vector exfat_vnodeops = {
     .vop_strategy   = exfat_strategy,
 }; 
 
-#endif /* _FS_EXFAT_VNODEOPS_H_ */  
+#endif /* _EXFAT_VNOPS_H_ */  

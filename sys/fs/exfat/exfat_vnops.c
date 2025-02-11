@@ -30,17 +30,8 @@
 #include "exfat_fat.h"
 #include "exfat_volume.h"
 #include "exfat_vnops.h"
-static vop_lookup_t __unused exfat_lookup;
-static vop_read_t       exfat_read;
-static vop_write_t      exfat_write;
-static vop_getattr_t    exfat_getattr;
-static vop_inactive_t   exfat_inactive;
-static vop_reclaim_t    exfat_reclaim;
 
-static int exfat_read_cluster(struct vnode *vp, struct exfat_mount *emp, uint32_t cluster, char *buffer);
-static int exfat_write_cluster(struct vnode *vp, struct exfat_mount *emp, uint32_t cluster, char *buffer);
-
-static int
+int
 exfat_read_cluster(struct vnode *vp, struct exfat_mount *emp, uint32_t cluster, char *buffer)
 {
     if (bootverbose)
@@ -120,7 +111,7 @@ exfat_read_cluster(struct vnode *vp, struct exfat_mount *emp, uint32_t cluster, 
 /*
  * Write to a cluster
  */
-static int
+int
 exfat_write_cluster(struct vnode *vp, struct exfat_mount *emp, uint32_t cluster, char *buffer)
 {
     if (bootverbose)
@@ -197,7 +188,7 @@ exfat_write_cluster(struct vnode *vp, struct exfat_mount *emp, uint32_t cluster,
 /*
  * Read file data
  */
-static int
+int
 exfat_read(struct vop_read_args *ap)
 {
     if (bootverbose)
@@ -300,7 +291,7 @@ out:
 /*
  * Get file attributes
  */
-static int
+int
 exfat_getattr(struct vop_getattr_args *ap)
 {
     if (bootverbose)
@@ -343,7 +334,7 @@ exfat_getattr(struct vop_getattr_args *ap)
 /*
  * Handle inactive vnode
  */
-static int
+int
 exfat_inactive(struct vop_inactive_args *ap)
 {
     struct vnode *vp = ap->a_vp;
@@ -366,7 +357,7 @@ exfat_inactive(struct vop_inactive_args *ap)
 /*
  * Reclaim vnode
  */
-static int
+int
 exfat_reclaim(struct vop_reclaim_args *ap)
 {
     struct vnode *vp = ap->a_vp;
@@ -390,7 +381,7 @@ exfat_reclaim(struct vop_reclaim_args *ap)
 /*
  * Read directory entries
  */
-static int
+int
 exfat_readdir(struct vop_readdir_args *ap)
 {
     if (bootverbose)
@@ -403,7 +394,7 @@ exfat_readdir(struct vop_readdir_args *ap)
 /*
  * Write file data
  */
-static int
+int
 exfat_write(struct vop_write_args *ap)
 {
     if (bootverbose)
@@ -499,7 +490,7 @@ out:
 /*
  * Create a new file
  */
-static int
+int
 exfat_create(struct vop_create_args *ap)
 {
     struct vnode *dvp = ap->a_dvp;
@@ -550,7 +541,7 @@ exfat_create(struct vop_create_args *ap)
 /*
  * Create a new directory
  */
-static int
+int
 exfat_mkdir(struct vop_mkdir_args *ap)
 {
     struct vnode *dvp = ap->a_dvp;
@@ -608,7 +599,7 @@ exfat_mkdir(struct vop_mkdir_args *ap)
 /*
  * Remove a file
  */
-static int
+int
 exfat_remove(struct vop_remove_args *ap)
 {
     struct vnode *dvp = ap->a_dvp;
@@ -655,7 +646,7 @@ exfat_remove(struct vop_remove_args *ap)
 /*
  * Remove a directory
  */
-static int
+int
 exfat_rmdir(struct vop_rmdir_args *ap)
 {
     struct vnode *dvp = ap->a_dvp;
@@ -712,7 +703,7 @@ exfat_rmdir(struct vop_rmdir_args *ap)
 /*
  * Rename a file/directory
  */
-static int
+int
 exfat_rename(struct vop_rename_args *ap)
 {
     struct vnode *fdvp = ap->a_fdvp;    /* from directory vnode */
@@ -799,7 +790,7 @@ exfat_rename(struct vop_rename_args *ap)
     return ENOENT;
 }
 
-static int
+int
 exfat_cachedlookup(struct vop_cachedlookup_args *ap)
 {
     if (bootverbose)
@@ -812,7 +803,7 @@ exfat_cachedlookup(struct vop_cachedlookup_args *ap)
     return error;
 }
 
-static int
+int
 exfat_access_wrapper(struct vop_access_args *ap)
 {
     if (bootverbose)
@@ -870,7 +861,7 @@ exfat_find_dirent(struct vnode *vp, uint32_t cluster,
 /*
  * Handle open operation
  */
-static int
+int
 exfat_open(struct vop_open_args *ap)
 {
     if (bootverbose)
@@ -896,7 +887,7 @@ exfat_open(struct vop_open_args *ap)
 /*
  * Handle close operation
  */
-static int
+int
 exfat_close(struct vop_close_args *ap)
 {
     if (bootverbose)
@@ -915,7 +906,7 @@ exfat_close(struct vop_close_args *ap)
 /*
  * Sync file to disk
  */
-static int
+int
 exfat_fsync(struct vop_fsync_args *ap)
 {
     if (bootverbose)
@@ -963,7 +954,7 @@ exfat_fsync(struct vop_fsync_args *ap)
 /*
  * Handle buffer I/O
  */
-static int
+int
 exfat_strategy(struct vop_strategy_args *ap)
 {
     if (bootverbose)
@@ -1140,4 +1131,4 @@ exfat_handle_error(struct exfat_mount *emp, struct vnode *vp, int error, int fla
     }
 
     return error;
-} 
+}
