@@ -28,22 +28,25 @@
 /* Forward declarations */
 struct exfat_mount;
 
+/* Add before the exfat_node struct definition */
+struct exfat_fileinfo {
+    uint32_t first_cluster;    /* First cluster of file/directory */
+    uint64_t file_size;        /* File size in bytes */
+    uint64_t valid_size;       /* Valid data size */
+    uint16_t attributes;       /* File attributes */
+    struct timespec create_time;     /* Creation time */
+    struct timespec modify_time;     /* Last modification time */
+    struct timespec access_time;     /* Last access time */
+};
+
 /* Node structure */
 struct exfat_node {
-    struct vnode *vnode;           /* Associated vnode */
-    uint32_t cluster;             /* First cluster */
-    LIST_ENTRY(exfat_node) next;  /* Hash chain link */
-    int type;                     /* Node type (file/directory) */
-    struct mount *mp;             /* Mount point */
-    struct {
-        uint32_t first_cluster;   /* First cluster of file */
-        uint64_t file_size;       /* File size in bytes */
-        uint64_t valid_size;      /* Valid data size */
-        uint16_t attributes;      /* File attributes */
-        struct timespec create_time;    /* Creation time */
-        struct timespec modify_time;    /* Last modification time */
-        struct timespec access_time;    /* Last access time */
-    } finfo;
+    struct mount *mp;          /* Mount point */
+    uint32_t cluster;         /* Starting cluster */
+    uint32_t type;           /* Node type */
+    struct exfat_fileinfo finfo;  /* File information */
+    LIST_ENTRY(exfat_node) next;  /* Hash chain */
+    struct vnode *vnode;      /* Associated vnode */
 };
 
 #define VTOE(vp)     ((struct exfat_node *)(vp)->v_data)

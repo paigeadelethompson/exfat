@@ -37,4 +37,12 @@ int exfat_create_entry(struct vnode *dvp, const char *name, int namelen,
                       struct exfat_direntry_set *es);
 int exfat_remove_entry(struct vnode *dvp, struct exfat_direntry_set *es, off_t offset);
 
+/* Add these prototypes */
+int exfat_create_direntry(struct exfat_mount *emp, uint32_t cluster,
+                         struct exfat_entry_file *file,
+                         struct exfat_entry_stream *stream,
+                         struct exfat_entry_name *name,
+                         size_t name_count);
+int exfat_remove_direntry(struct exfat_mount *emp, uint32_t cluster);
+
 #endif /* _FS_EXFAT_DIR_H_ */ 

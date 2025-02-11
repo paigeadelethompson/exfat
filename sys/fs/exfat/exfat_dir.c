@@ -277,8 +277,16 @@ exfat_write_entry(struct exfat_mount *emp, struct exfat_node *node)
         return error;
     }
 
-    /* Write entry data */
-    memcpy(bp->b_data, &node->finfo, sizeof(struct exfat_fileinfo));
+    /* Write entry data - write the file entry first */
+    struct exfat_entry_file *file = (struct exfat_entry_file *)bp->b_data;
+    file->type = node->type;
+    file->file_attributes = node->finfo.attributes;
+    
+    /* Write stream entry after file entry */
+    struct exfat_entry_stream *stream = (struct exfat_entry_stream *)(file + 1);
+    stream->first_cluster = node->finfo.first_cluster;
+    stream->data_length = node->finfo.file_size;
+    stream->valid_data_length = node->finfo.valid_size;
     
     error = bwrite(bp);
     return error;
@@ -303,10 +311,11 @@ exfat_create_direntry(struct exfat_mount *emp, uint32_t cluster,
         return error;
 
     /* Set entry data */
-    ep->type = EXFAT_ENTRY_FILE;
-    memcpy(&ep->finfo, file, sizeof(struct exfat_entry_file));
-    memcpy(&ep->stream, stream, sizeof(struct exfat_entry_stream));
-    memcpy(&ep->name, name, name_count * sizeof(struct exfat_entry_name));
+    ep->type = file->type;
+    ep->finfo.attributes = file->file_attributes;
+    ep->finfo.first_cluster = stream->first_cluster;
+    ep->finfo.file_size = stream->data_length;
+    ep->finfo.valid_size = stream->valid_data_length;
 
     /* Write entry to disk */
     error = exfat_write_entry(emp, ep);
@@ -332,6 +341,10 @@ exfat_remove_direntry(struct exfat_mount *emp, uint32_t cluster)
 
     /* Set entry type to deleted */
     ep->type = EXFAT_ENTRY_DELETED;
+    ep->finfo.first_cluster = 0;
+    ep->finfo.file_size = 0;
+    ep->finfo.valid_size = 0;
+    ep->finfo.attributes = 0;
 
     /* Write entry to disk */
     error = exfat_write_entry(emp, ep);
