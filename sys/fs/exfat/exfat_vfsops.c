@@ -366,56 +366,18 @@ exfat_unmount(struct mount *mp, int mntflags)
 static int
 exfat_root(struct mount *mp, int flags, struct vnode **vpp)
 {
-    struct exfat_mount *emp;
-    struct vnode *vp;
+    struct exfat_mount *emp = VFSTOEXFAT(mp);
     struct exfat_node *ep;
     int error;
 
     if (bootverbose)
         printf("exfat: [exfat_root] getting root vnode\n");
 
-    /* Basic validation */
-    if (mp == NULL || vpp == NULL) {
-        printf("exfat: [exfat_root] NULL parameters\n");
-        return EINVAL;
-    }
-
-    emp = VFSTOEXFAT(mp);
-    if (emp == NULL) {
-        printf("exfat: [exfat_root] NULL mount structure\n");
-        return EINVAL;
-    }
-
-    if (bootverbose)
-        printf("exfat: [exfat_root] root cluster: %u\n", emp->root_cluster);
-
-    /* Get root vnode */
-    error = exfat_get_node(mp, emp->root_cluster, EXFAT_TYPE_DIR, &vp);
+    error = exfat_get_node(mp, emp->root_cluster, EXFAT_TYPE_DIR, vpp);
     if (error) {
         printf("exfat: [exfat_root] failed to get root node: %d\n", error);
         return error;
     }
-
-    /* Lock vnode for initialization */
-    error = vn_lock(vp, flags | LK_RETRY);
-    if (error) {
-        printf("exfat: [exfat_root] failed to lock root vnode: %d\n", error);
-        vrele(vp);
-        return error;
-    }
-
-    /* Initialize root directory node */
-    ep = VTOE(vp);
-    ep->finfo.attributes = EXFAT_ATTR_DIRECTORY;
-    ep->finfo.first_cluster = emp->root_cluster;
-    ep->finfo.file_size = emp->bytes_per_cluster;
-    ep->finfo.valid_size = ep->finfo.file_size;
-
-    if (bootverbose)
-        printf("exfat: [exfat_root] root node initialized at cluster %u\n", emp->root_cluster);
-
-    vn_unlock(vp);
-    *vpp = vp;
 
     if (bootverbose)
         printf("exfat: [exfat_root] root vnode setup complete\n");
