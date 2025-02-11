@@ -139,7 +139,7 @@ exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
     mtx_unlock(&emp->hash_mtx.mtx);
 
     VN_LOCK_ASHARE(vp);
-    VOP_UNLOCK(vp, 0);
+    VOP_UNLOCK(vp);
 
     *vpp = vp;
     return 0;
