@@ -351,17 +351,15 @@ exfat_inactive(struct vop_inactive_args *ap)
 {
     struct vnode *vp = ap->a_vp;
     struct exfat_node *ep = VTOE(vp);
-    struct exfat_mount *emp = VFSTOEXFAT(vp->v_mount);
 
     if (bootverbose)
-        printf("exfat: [exfat_inactive] deactivating vnode %p\n", vp);
+        printf("exfat: [exfat_inactive] inactivating vnode %p, node %p\n", vp, ep);
 
-    mtx_lock(&emp->hash_mtx.mtx);
-    LIST_REMOVE(ep, next);
-    mtx_unlock(&emp->hash_mtx.mtx);
-
+    /* Clear v_data before freeing node */
     vp->v_data = NULL;
-    free(ep, M_EXFAT);
+    
+    /* Free the exfat node */
+    exfat_node_put(ep);
 
     return 0;
 }
