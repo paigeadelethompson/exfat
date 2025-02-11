@@ -361,40 +361,64 @@ exfat_unmount(struct mount *mp, int mntflags)
 }
 
 /*
- * Get root vnode
+ * Get root vnode for mounted filesystem
  */
 static int
 exfat_root(struct mount *mp, int flags, struct vnode **vpp)
 {
-    struct exfat_mount *emp = VFSTOEXFAT(mp);
+    struct exfat_mount *emp;
+    struct vnode *vp;
+    struct exfat_node *ep;
     int error;
 
     if (bootverbose)
         printf("exfat: [exfat_root] getting root vnode\n");
 
-    error = exfat_get_node(mp, emp->root_cluster, EXFAT_TYPE_DIR, vpp);
+    /* Basic validation */
+    if (mp == NULL || vpp == NULL) {
+        printf("exfat: [exfat_root] NULL parameters\n");
+        return EINVAL;
+    }
+
+    emp = VFSTOEXFAT(mp);
+    if (emp == NULL) {
+        printf("exfat: [exfat_root] NULL mount structure\n");
+        return EINVAL;
+    }
+
+    if (bootverbose)
+        printf("exfat: [exfat_root] root cluster: %u\n", emp->root_cluster);
+
+    /* Get root vnode */
+    error = exfat_get_node(mp, emp->root_cluster, EXFAT_TYPE_DIR, &vp);
     if (error) {
+        printf("exfat: [exfat_root] failed to get root node: %d\n", error);
         return error;
     }
 
-    /* We need to initialize the root vnode for directory operations */
-    error = VOP_LOCK(*vpp, LK_EXCLUSIVE);
-    if (error)
+    /* Lock vnode for initialization */
+    error = vn_lock(vp, flags | LK_RETRY);
+    if (error) {
+        printf("exfat: [exfat_root] failed to lock root vnode: %d\n", error);
+        vrele(vp);
         return error;
+    }
 
     /* Initialize root directory node */
-    struct exfat_node *ep = VTOE(*vpp);
+    ep = VTOE(vp);
     ep->finfo.attributes = EXFAT_ATTR_DIRECTORY;
     ep->finfo.first_cluster = emp->root_cluster;
-    
-    /* Root directory size is special - set to one cluster for now */
     ep->finfo.file_size = emp->bytes_per_cluster;
     ep->finfo.valid_size = ep->finfo.file_size;
 
-    VOP_UNLOCK(*vpp);
+    if (bootverbose)
+        printf("exfat: [exfat_root] root node initialized at cluster %u\n", emp->root_cluster);
+
+    VOP_UNLOCK(vp);
+    *vpp = vp;
 
     if (bootverbose)
-        printf("exfat: [exfat_root] root vnode initialized\n");
+        printf("exfat: [exfat_root] root vnode setup complete\n");
 
     return 0;
 }
