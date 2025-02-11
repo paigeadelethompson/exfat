@@ -320,35 +320,3 @@ exfat_hash_remove(struct exfat_mount *emp, struct exfat_node *ep)
     LIST_REMOVE(ep, next);
 }
 
-/* In exfat_sync_node */
-    if (bootverbose)
-        printf("exfat: [exfat_sync_node] syncing node at cluster %u\n", ep->cluster);
-
-/* In exfat_update_node */
-    if (bootverbose)
-        printf("exfat: [exfat_update_node] updating node at cluster %u\n", ep->cluster);
-
-/* In exfat_node_get_block */
-    if (bootverbose)
-        printf("exfat: [exfat_node_get_block] getting block for node at cluster %u\n", ep->cluster);
-
-/* In exfat_node_set_block */
-    if (bootverbose)
-        printf("exfat: [exfat_node_set_block] setting block for node at cluster %u\n", ep->cluster);
-
-/* In exfat_node_read */
-    if (bootverbose)
-        printf("exfat: [exfat_node_read] reading node at cluster %u\n", ep->cluster);
-
-/* In exfat_node_write */
-    if (bootverbose)
-        printf("exfat: [exfat_node_write] writing node at cluster %u\n", ep->cluster);
-
-/* In exfat_node_truncate */
-    if (bootverbose)
-        printf("exfat: [exfat_node_truncate] truncating node at cluster %u to size %jd\n",
-               ep->cluster, (intmax_t)length); 
-
-printf("exfat: [exfat_lookup_node] looking up node '%s' in directory %p\n", cnp->cn_nameptr, dvp);
-
-printf("exfat: [exfat_init_node] initializing node for cluster %u\n", cluster); 
