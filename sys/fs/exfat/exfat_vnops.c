@@ -612,7 +612,7 @@ static int
 exfat_remove(struct vop_remove_args *ap)
 {
     if (bootverbose)
-        printf("exfat: [%s] removing file '%s'\n", __func__, ep->name);
+        printf("exfat: [%s] removing file at cluster %u\n", __func__, ep->cluster);
 
     struct vnode *dvp = ap->a_dvp;
     struct vnode *vp = ap->a_vp;
@@ -659,7 +659,7 @@ static int
 exfat_rmdir(struct vop_rmdir_args *ap)
 {
     if (bootverbose)
-        printf("exfat: [%s] removing directory '%s'\n", __func__, ep->name);
+        printf("exfat: [%s] removing directory at cluster %u\n", __func__, ep->cluster);
 
     struct vnode *dvp = ap->a_dvp;
     struct vnode *vp = ap->a_vp;
@@ -716,7 +716,8 @@ static int
 exfat_rename(struct vop_rename_args *ap)
 {
     if (bootverbose)
-        printf("exfat: [%s] renaming '%s' to '%s'\n", __func__, fep->name, cnp->cn_nameptr);
+        printf("exfat: [%s] renaming file at cluster %u to '%s'\n", __func__, 
+               fep->cluster, cnp->cn_nameptr);
 
     struct vnode *fdvp = ap->a_fdvp;    /* from directory vnode */
     struct vnode *fvp = ap->a_fvp;      /* from file/dir vnode */
