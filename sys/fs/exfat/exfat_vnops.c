@@ -29,7 +29,7 @@
 #include "exfat.h"
 #include "exfat_fat.h"
 #include "exfat_volume.h"
-
+#include "exfat_vnops.h"
 static vop_lookup_t __unused exfat_lookup;
 static vop_read_t       exfat_read;
 static vop_write_t      exfat_write;

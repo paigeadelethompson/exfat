@@ -49,6 +49,7 @@
 #include "exfat.h"
 #include "exfat_fat.h"
 #include "exfat_node.h"
+#include "exfat_vnops.h"
 
 /* Mount options */
 static const char *exfat_opts[] = {
