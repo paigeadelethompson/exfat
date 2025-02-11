@@ -52,16 +52,36 @@ exfat_scan_directory(struct vnode *vp, struct exfat_scan_ctx *ctx)
         return EINVAL;
     }
 
-    /* Get mount and node */
-    emp = VFSTOEXFAT(vp->v_mount);
-    if (emp == NULL) {
-        printf("exfat: [exfat_scan_directory] NULL mount structure\n");
+    /* Validate vnode before accessing any fields */
+    if (vp->v_type != VDIR) {
+        printf("exfat: [exfat_scan_directory] not a directory vnode\n");
         return EINVAL;
     }
 
-    ep = VTOE(vp);
+    /* Get mount point carefully */
+    struct mount *mp = vp->v_mount;
+    if (mp == NULL) {
+        printf("exfat: [exfat_scan_directory] NULL mount pointer\n");
+        return EINVAL;
+    }
+
+    /* Get mount data carefully */
+    emp = mp->mnt_data;
+    if (emp == NULL) {
+        printf("exfat: [exfat_scan_directory] NULL mount data\n");
+        return EINVAL;
+    }
+
+    /* Get node data carefully */
+    ep = vp->v_data;
     if (ep == NULL) {
         printf("exfat: [exfat_scan_directory] NULL node\n");
+        return EINVAL;
+    }
+
+    /* Validate node cluster */
+    if (ep->cluster == 0) {
+        printf("exfat: [exfat_scan_directory] invalid cluster 0\n");
         return EINVAL;
     }
 
