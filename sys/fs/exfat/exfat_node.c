@@ -242,7 +242,7 @@ int
 exfat_init_nodes(struct exfat_mount *emp)
 {
     if (bootverbose)
-        printf("exfat: initializing node hash table\n");
+        printf("exfat: initializing node hash table for mount %p\n", emp);
 
     /* Validate mount structure */
     if (emp == NULL) {
@@ -252,8 +252,10 @@ exfat_init_nodes(struct exfat_mount *emp)
 
     /* Allocate hash table */
     emp->node_hash = hashinit(EXFAT_HASH_SIZE, M_EXFAT, &emp->node_hash_mask);
-    if (emp->node_hash == NULL)
+    if (emp->node_hash == NULL) {
+        printf("exfat: failed to allocate hash table\n");
         return ENOMEM;
+    }
 
     if (bootverbose)
         printf("exfat: initializing mutex at %p\n", &emp->hash_mtx.mtx);

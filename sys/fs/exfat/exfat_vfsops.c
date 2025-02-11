@@ -100,7 +100,7 @@ exfat_mount(struct mount *mp)
     int ronly = (mp->mnt_flag & MNT_RDONLY) != 0;
 
     if (bootverbose)
-        printf("exfat: mounting\n");
+        printf("exfat: mounting filesystem\n");
 
     if (vfs_filteropt(mp->mnt_optnew, exfat_opts))
         return (EINVAL);
@@ -269,6 +269,18 @@ exfat_mount(struct mount *mp)
             printf("exfat: failed to initialize upcase table: %d\n", error);
         goto error_exit;
     }
+
+    /* Initialize node hash table */
+    error = exfat_init_nodes(emp);
+    if (error) {
+        printf("exfat: failed to initialize node hash table: %d\n", error);
+        goto error_exit;
+    }
+
+    /* Read root directory */
+    error = exfat_read_rootdir(emp);
+    if (error)
+        goto error_exit;
 
     /* Set the mount */
     mp->mnt_data = emp;
