@@ -299,7 +299,7 @@ exfat_unmount(struct mount *mp, int mntflags)
     if (emp->devvp) {
         vn_lock(emp->devvp, LK_EXCLUSIVE | LK_RETRY);
         error = VOP_CLOSE(emp->devvp, FREAD|FWRITE, NOCRED, curthread);
-        vn_unlock(emp->devvp);
+        VOP_UNLOCK(emp->devvp);
         vinvalbuf(emp->devvp, V_SAVE, 0, 0);
         vrele(emp->devvp);
     }
