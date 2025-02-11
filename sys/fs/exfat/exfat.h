@@ -370,4 +370,7 @@ int exfat_init_directory(struct exfat_mount *emp, uint32_t cluster);
 void exfat_cleanup_bitmap(struct exfat_mount *emp);
 int exfat_read_rootdir(struct exfat_mount *emp);
 
+/* Function prototypes */
+int exfat_init_vnops(void);
+
 #endif /* _FS_EXFAT_H_ */ 
