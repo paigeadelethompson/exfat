@@ -63,34 +63,60 @@ exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
     struct vnode *vp;
     int error;
 
+    if (bootverbose)
+        printf("exfat: [exfat_get_node] getting node for cluster %u, type %d\n", 
+               cluster, type);
+
     /* Basic parameter validation */
     if (mp == NULL || vpp == NULL) {
+        printf("exfat: [exfat_get_node] invalid parameters\n");
         return EINVAL;
     }
 
     /* Get mount data */
     emp = VFSTOEXFAT(mp);
     if (emp == NULL) {
+        printf("exfat: [exfat_get_node] null mount structure\n");
         return EINVAL;
     }
 
-    /* Check if node already exists in hash table */
+    /* First check if node exists in hash table */
+    if (bootverbose)
+        printf("exfat: [exfat_get_node] checking hash table\n");
+
     mtx_lock(&emp->hash_mtx.mtx);
     ep = exfat_hash_lookup(emp, cluster);
     if (ep != NULL) {
+        if (bootverbose)
+            printf("exfat: [exfat_get_node] found existing node\n");
+        
         vp = ETOV(ep);
-        error = vget(vp, LK_EXCLUSIVE);
+        /* Release hash mutex before vget to avoid lock order reversal */
         mtx_unlock(&emp->hash_mtx.mtx);
+        
+        error = vget(vp, LK_EXCLUSIVE);
         if (error == 0) {
             *vpp = vp;
+            if (bootverbose)
+                printf("exfat: [exfat_get_node] returning existing vnode\n");
         }
         return error;
     }
     mtx_unlock(&emp->hash_mtx.mtx);
 
+    if (bootverbose)
+        printf("exfat: [exfat_get_node] creating new node\n");
+
+    /* Validate cluster number before allocating anything */
+    if (cluster < EXFAT_CLUSTER_FIRST || cluster >= emp->clusters_count + 2) {
+        printf("exfat: [exfat_get_node] invalid cluster number %u\n", cluster);
+        return EINVAL;
+    }
+
     /* Allocate new node */
     ep = malloc(sizeof(*ep), M_EXFAT, M_WAITOK | M_ZERO);
     if (ep == NULL) {
+        printf("exfat: [exfat_get_node] failed to allocate node\n");
         return ENOMEM;
     }
 
@@ -99,22 +125,31 @@ exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
     ep->type = type;
     ep->mp = mp;
 
-    /* Validate cluster number */
-    if (cluster < EXFAT_CLUSTER_FIRST || cluster >= emp->clusters_count + 2) {
-        free(ep, M_EXFAT);
-        return EINVAL;
-    }
+    if (bootverbose)
+        printf("exfat: [exfat_get_node] getting new vnode\n");
 
     /* Get new vnode */
     error = getnewvnode("exfat", mp, &exfat_vnodeops, &vp);
     if (error) {
+        printf("exfat: [exfat_get_node] getnewvnode failed: %d\n", error);
         free(ep, M_EXFAT);
         return error;
     }
 
-    /* Initialize vnode */
+    /* Lock the vnode before initializing it */
+    error = vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
+    if (error) {
+        printf("exfat: [exfat_get_node] vn_lock failed: %d\n", error);
+        vput(vp);
+        free(ep, M_EXFAT);
+        return error;
+    }
+
+    /* Link vnode and node together */
     vp->v_data = ep;
-    /* Set vnode type based on node type */
+    ep->vnode = vp;
+
+    /* Set vnode type */
     switch (type) {
     case EXFAT_TYPE_FILE:
         vp->v_type = VREG;
@@ -123,23 +158,19 @@ exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
         vp->v_type = VDIR;
         break;
     default:
+        printf("exfat: [exfat_get_node] invalid node type %d\n", type);
         vput(vp);
         free(ep, M_EXFAT);
         return EINVAL;
     }
-    ep->vnode = vp;
 
-    /* Lock the vnode */
-    error = lockmgr(vp->v_vnlock, LK_EXCLUSIVE, NULL);
-    if (error) {
-        vput(vp);
-        free(ep, M_EXFAT);
-        return error;
-    }
+    if (bootverbose)
+        printf("exfat: [exfat_get_node] reading node info\n");
 
-    /* Initialize the node info */
+    /* Read the node's directory entry info */
     error = exfat_read_node_info(emp, ep);
     if (error) {
+        printf("exfat: [exfat_get_node] read_node_info failed: %d\n", error);
         vput(vp);
         free(ep, M_EXFAT);
         return error;
@@ -150,7 +181,10 @@ exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
     exfat_hash_insert(emp, ep);
     mtx_unlock(&emp->hash_mtx.mtx);
 
-    VN_LOCK_ASHARE(vp);
+    if (bootverbose)
+        printf("exfat: [exfat_get_node] node created and initialized\n");
+
+    /* Unlock but keep the reference */
     VOP_UNLOCK(vp);
 
     *vpp = vp;
