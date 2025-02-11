@@ -106,7 +106,7 @@ exfat_scan_directory(struct vnode *vp, struct exfat_scan_ctx *ctx)
 
     /* Validate sector number */
     if (sector >= emp->boot.volume_length) {
-        printf("exfat: [exfat_scan_directory] invalid sector number %u (volume length %u)\n",
+        printf("exfat: [exfat_scan_directory] invalid sector number %u (volume length %lu)\n",
                sector, emp->boot.volume_length);
         return EINVAL;
     }
