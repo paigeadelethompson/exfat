@@ -251,7 +251,7 @@ exfat_read_node_info(struct exfat_mount *emp, struct exfat_node *ep)
 void
 exfat_node_put(struct exfat_node *ep)
 {
-    struct mount *mp = ep->mp;  /* Use cached mount pointer from node */
+    struct mount *mp = ep->mp;
     struct exfat_mount *emp;
 
     if (bootverbose)
@@ -259,19 +259,23 @@ exfat_node_put(struct exfat_node *ep)
 
     if (mp == NULL) {
         printf("exfat: [exfat_node_put] null mount pointer\n");
-        return;
+        goto just_free;
     }
 
     emp = VFSTOEXFAT(mp);
     if (emp == NULL) {
         printf("exfat: [exfat_node_put] null exfat mount\n");
-        return;
+        goto just_free;
     }
 
-    mtx_lock(&emp->hash_mtx.mtx);
-    LIST_REMOVE(ep, next);
-    mtx_unlock(&emp->hash_mtx.mtx);
+    /* Check if node is still in list before trying to remove it */
+    if (ep->next.le_prev != NULL) {
+        mtx_lock(&emp->hash_mtx.mtx);
+        LIST_REMOVE(ep, next);
+        mtx_unlock(&emp->hash_mtx.mtx);
+    }
 
+just_free:
     free(ep, M_EXFAT);
     if (bootverbose)
         printf("exfat: [exfat_node_put] node released\n");
