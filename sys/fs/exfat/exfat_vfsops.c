@@ -44,6 +44,7 @@
 #include <geom/geom.h>
 #include <geom/geom_vfs.h>  /* For gb_bufops */
 #include <sys/mutex.h>
+#include <sys/vmmeter.h>  /* For vfs_busy */
 
 #include "exfat.h"
 #include "exfat_fat.h"
@@ -247,12 +248,13 @@ exfat_mount(struct mount *mp)
     }
 
     /* Get new vnode for block device */
-    error = vfs_mountedon(devvp);
+    error = vfs_busy(mp, 0);
     if (error)
         return error;
 
     error = exfat_mountfs(devvp, mp);
     if (error) {
+        vfs_unbusy(mp);
         mntfs_freevp(devvp);
         return error;
     }
