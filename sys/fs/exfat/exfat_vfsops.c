@@ -286,23 +286,23 @@ exfat_mount(struct mount *mp)
     return 0;
 
 error_exit:
-    // if (bp != NULL)
-    //     brelse(bp);
+    if (bp != NULL)
+        brelse(bp);
 
-    // // Only try to close if cp was successfully opened
-    // if (cp != NULL) {
-    //     g_topology_lock();
-    //     g_vfs_close(cp);
-    //     g_topology_unlock();
-    // }
+    // Only try to close if cp was successfully opened
+    if (cp != NULL) {
+        g_topology_lock();
+        g_vfs_close(cp);
+        g_topology_unlock();
+    }
 
-    // // Rest of cleanup...
-    // if (devvp != NULL) {
-    //     vn_lock(devvp, LK_EXCLUSIVE | LK_RETRY); 
-    //     mntfs_freevp(devvp);
-    // }
-    // if (dev != NULL)
-    //     dev_rel(dev);
+    // Rest of cleanup...
+    if (devvp != NULL) {
+        vn_lock(devvp, LK_EXCLUSIVE | LK_RETRY); 
+        mntfs_freevp(devvp);
+    }
+    if (dev != NULL)
+        dev_rel(dev);
     return (error);
 }
 
