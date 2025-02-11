@@ -40,33 +40,54 @@ static int exfat_write_entry(struct exfat_mount *emp, struct exfat_node *node);
 int
 exfat_scan_directory(struct vnode *vp, struct exfat_scan_ctx *ctx)
 {
-    printf("exfat: [exfat_scan_directory] scanning directory vnode %p\n", vp);
+    if (bootverbose)
+        printf("exfat: [exfat_scan_directory] scanning directory vnode %p\n", vp);
 
     struct exfat_mount *emp = VTOVFSMP(vp);
     struct exfat_node *ep = VTOE(vp);
     int error;
 
+    /* Validate input parameters */
+    if (vp == NULL || ctx == NULL) {
+        printf("exfat: [exfat_scan_directory] NULL parameters\n");
+        return EINVAL;
+    }
+
+    /* Validate mount and node */
+    if (emp == NULL || ep == NULL) {
+        printf("exfat: [exfat_scan_directory] NULL mount or node\n");
+        return EINVAL;
+    }
+
+    if (bootverbose)
+        printf("exfat: [exfat_scan_directory] first cluster: %u\n", ep->finfo.first_cluster);
+
     /* Initialize scan context */
     ctx->emp = emp;
-    ctx->cluster = ep->finfo.first_cluster;
+    ctx->cluster = ep->cluster;
     ctx->offset = 0;
     ctx->bp = NULL;
 
+    /* Calculate sector number */
+    uint32_t sector = emp->boot.cluster_heap_offset +
+                      ((ctx->cluster - 2) << emp->boot.sectors_per_cluster_shift);
+
+    if (bootverbose)
+        printf("exfat: [exfat_scan_directory] reading sector %u\n", sector);
+
     /* Read first cluster */
-    error = bread(emp->devvp,
-                 emp->boot.cluster_heap_offset +
-                 ((ctx->cluster - 2) << emp->boot.sectors_per_cluster_shift),
-                 emp->bytes_per_cluster, NOCRED, &ctx->bp);
+    error = bread(emp->devvp, sector, EXFAT_SECTOR_SIZE, NOCRED, &ctx->bp);
     if (error) {
         if (bootverbose)
-            printf("exfat: failed to read directory cluster: %d\n", error);
+            printf("exfat: [exfat_scan_directory] failed to read directory cluster: %d\n", error);
         brelse(ctx->bp);
+        ctx->bp = NULL;
         return error;
     }
 
     ctx->entry = (uint8_t *)ctx->bp->b_data;
     if (bootverbose)
-        printf("exfat: directory scan initialized\n");
+        printf("exfat: [exfat_scan_directory] directory scan initialized\n");
     return 0;
 }
 
