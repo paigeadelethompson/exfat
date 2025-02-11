@@ -84,11 +84,20 @@ exfat_mountfs(struct vnode *devvp, struct mount *mp)
     struct exfat_mount *emp;
     struct buf *bp = NULL;
     struct g_consumer *cp;
+    struct cdev *dev;
     int error;
     int ronly = (mp->mnt_flag & MNT_RDONLY) != 0;
 
     if (bootverbose)
         printf("exfat: [exfat_mountfs] mounting device\n");
+
+    /* Set up the device vnode */
+    dev = devvp->v_rdev;
+    if (atomic_cmpset_acq_ptr((uintptr_t *)&dev->si_mountpt, 0,
+        (uintptr_t)mp) == 0) {
+        return (EBUSY);
+    }
+    dev_ref(dev);
 
     /* Open the device through GEOM */
     g_topology_lock();
@@ -97,6 +106,8 @@ exfat_mountfs(struct vnode *devvp, struct mount *mp)
     if (error) {
         if (bootverbose)
             printf("exfat: [exfat_mountfs] failed to open device: %d\n", error);
+        atomic_store_rel_ptr((uintptr_t *)&dev->si_mountpt, 0);
+        dev_rel(dev);
         return error;
     }
 
@@ -236,7 +247,9 @@ exfat_mount(struct mount *mp)
     }
 
     /* Get new vnode for block device */
-    devvp = mntfs_allocvp(mp, devvp);
+    error = vfs_mountedon(devvp);
+    if (error)
+        return error;
 
     error = exfat_mountfs(devvp, mp);
     if (error) {
