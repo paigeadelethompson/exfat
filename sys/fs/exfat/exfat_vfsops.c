@@ -50,8 +50,6 @@
 #include "exfat_fat.h"
 #include "exfat_node.h"
 
-struct vop_vector exfat_vnodeops;  /* Forward declaration */
-
 /* Mount options */
 static const char *exfat_opts[] = {
     "from",         /* device path */
