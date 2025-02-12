@@ -288,7 +288,7 @@ exfat_unmount(struct mount *mp, int mntflags)
         flags |= FORCECLOSE;
 
     /* Check if mount is already being torn down */
-    if (mp->mnt_flag & MNT_UNMOUNT) {
+    if (mp->mnt_kern_flag & MNTK_UNMOUNT) {
         if (bootverbose)
             printf("exfat: [exfat_unmount] already unmounting\n");
         return 0;
