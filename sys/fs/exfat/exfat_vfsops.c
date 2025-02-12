@@ -284,21 +284,37 @@ exfat_unmount(struct mount *mp, int mntflags)
     if (bootverbose)
         printf("exfat: [exfat_unmount] unmounting filesystem\n");
 
-    /* Set force unmount flag if requested */
     if (mntflags & MNT_FORCE)
         flags |= FORCECLOSE;
 
-    /* First flush all vnodes */
-    error = vflush(mp, 0, flags, curthread);
-    if (error && !(flags & FORCECLOSE)) {
-        printf("exfat: [exfat_unmount] vflush failed: %d\n", error);
-        return error;
+    /* Check if mount is already being torn down */
+    if (mp->mnt_flag & MNT_UNMOUNT) {
+        if (bootverbose)
+            printf("exfat: [exfat_unmount] already unmounting\n");
+        return 0;
     }
 
-    /* Close device */
-    if (emp->devvp) {
+    error = vflush(mp, 0, flags, curthread);
+    if (error && !(flags & FORCECLOSE))
+        return error;
+
+    if (emp && emp->devvp) {
+        /* Try non-blocking lock first */
+        error = vn_lock(emp->devvp, LK_EXCLUSIVE | LK_NOWAIT);
+        if (error) {
+            /* If locked, wait for unlock */
+            if (error == EBUSY) {
+                if (bootverbose)
+                    printf("exfat: [exfat_unmount] waiting for lock\n");
+                error = vn_lock(emp->devvp, LK_EXCLUSIVE);
+            }
+            if (error)
+                return error;
+        }
+
         error = VOP_CLOSE(emp->devvp, FREAD|FWRITE, NOCRED, curthread);
         vinvalbuf(emp->devvp, V_SAVE, 0, 0);
+        VOP_UNLOCK(emp->devvp);
         vrele(emp->devvp);
     }
 
