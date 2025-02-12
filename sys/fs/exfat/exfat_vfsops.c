@@ -216,6 +216,7 @@ exfat_mount(struct mount *mp)
     struct nameidata nd;
     char *from;
     int error;
+    int retries = 1;  // Max 5 attempts
 
     if (bootverbose)
         printf("exfat: [exfat_mount] mounting filesystem\n");
@@ -248,9 +249,15 @@ exfat_mount(struct mount *mp)
         return ENOTBLK;
     }
 
+retry:
     /* Get new vnode for block device */
-    error = vfs_busy(mp, MBF_NOWAIT);  /* Don't wait forever */
+    error = vfs_busy(mp, 0);
     if (error) {
+        if (--retries > 0) {
+            /* Sleep for 1 second and retry */
+            pause("exfatmnt", hz);
+            goto retry;
+        }
         vput(devvp);
         return error;
     }
