@@ -249,9 +249,11 @@ exfat_mount(struct mount *mp)
     }
 
     /* Get new vnode for block device */
-    error = vfs_busy(mp, 0);
-    if (error)
+    error = vfs_busy(mp, MBF_NOWAIT);  /* Don't wait forever */
+    if (error) {
+        vput(devvp);
         return error;
+    }
 
     error = exfat_mountfs(devvp, mp);
     if (error) {
@@ -294,27 +296,18 @@ exfat_unmount(struct mount *mp, int mntflags)
         return 0;
     }
 
-    error = vflush(mp, 0, flags, curthread);
+    /* Try flush with timeout */
+    error = vflush(mp, 0, flags | VNORESOURCE, curthread);
     if (error && !(flags & FORCECLOSE))
         return error;
 
     if (emp && emp->devvp) {
-        /* Try non-blocking lock first */
-        error = vn_lock(emp->devvp, LK_EXCLUSIVE | LK_NOWAIT);
-        if (error) {
-            /* If locked, wait for unlock */
-            if (error == EBUSY) {
-                if (bootverbose)
-                    printf("exfat: [exfat_unmount] waiting for lock\n");
-                error = vn_lock(emp->devvp, LK_EXCLUSIVE);
-            }
-            if (error)
-                return error;
+        /* Try lock with timeout */
+        error = vn_lock(emp->devvp, LK_EXCLUSIVE | LK_TIMELOCK);
+        if (error == 0) {
+            error = VOP_CLOSE(emp->devvp, FREAD|FWRITE, NOCRED, curthread);
+            VOP_UNLOCK(emp->devvp);
         }
-
-        error = VOP_CLOSE(emp->devvp, FREAD|FWRITE, NOCRED, curthread);
-        vinvalbuf(emp->devvp, V_SAVE, 0, 0);
-        VOP_UNLOCK(emp->devvp);
         vrele(emp->devvp);
     }
 
