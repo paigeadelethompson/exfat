@@ -62,6 +62,7 @@ exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
     struct exfat_node *ep;
     struct vnode *vp;
     int error;
+    int retries = 3;  // Max 3 attempts
 
     if (bootverbose)
         printf("exfat: [exfat_get_node] getting node for cluster %u, type %d\n", 
@@ -132,16 +133,15 @@ exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
     error = getnewvnode("exfat", mp, &exfat_vnodeops, &vp);
     if (error) {
         printf("exfat: [exfat_get_node] getnewvnode failed: %d\n", error);
-        free(ep, M_EXFAT);  /* Haven't attached node to vnode yet, safe to free */
+        free(ep, M_EXFAT);
         return error;
     }
 
-    /* Lock the vnode before initializing it */
-    error = vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
+    /* Lock without retry - if we can't get it immediately, fail */
+    error = vn_lock(vp, LK_EXCLUSIVE | LK_NOWAIT);
     if (error) {
-        printf("exfat: [exfat_get_node] vn_lock failed: %d\n", error);
-        /* vput will trigger inactive which frees the node */
         vput(vp);
+        free(ep, M_EXFAT);
         return error;
     }
 
@@ -149,11 +149,9 @@ exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
     vp->v_data = ep;
     ep->vnode = vp;
 
-    /* Initialize the vnode - start/finish write pair */
-    struct mount *mpp = mp;
-    error = vn_start_write(NULL, &mpp, V_WAIT);
+    /* Don't wait for write lock */
+    error = vn_start_write(NULL, &mp, V_NOWAIT);
     if (error) {
-        printf("exfat: [exfat_get_node] vn_start_write failed: %d\n", error);
         vrele(vp);
         free(ep, M_EXFAT);
         return error;

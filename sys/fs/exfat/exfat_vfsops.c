@@ -332,14 +332,16 @@ exfat_root(struct mount *mp, int flags, struct vnode **vpp)
 {
     struct exfat_mount *emp = VFSTOEXFAT(mp);
     int error;
+    int retries = 3;
 
-    if (bootverbose)
-        printf("exfat: [exfat_root] getting root vnode\n");
-
+retry:
     error = exfat_get_node(mp, emp->root_cluster, EXFAT_TYPE_DIR, vpp);
     if (error) {
-        if (bootverbose)
-            printf("exfat: [exfat_root] failed to get root node: %d\n", error);
+        if (--retries > 0) {
+            pause("exfatroot", hz/2);
+            goto retry;
+        }
+        printf("exfat: [exfat_root] failed to get root node after retries: %d\n", error);
         return error;
     }
 
