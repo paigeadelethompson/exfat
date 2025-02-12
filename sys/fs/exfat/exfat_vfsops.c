@@ -35,6 +35,7 @@
 #include <sys/module.h>
 #include <sys/mount.h>
 #include <sys/vnode.h>
+#include <sys/vmmeter.h>  /* For vfs_busy flags */
 #include <sys/eventhandler.h>
 #include <sys/bio.h>
 #include <sys/buf.h>
@@ -44,7 +45,6 @@
 #include <geom/geom.h>
 #include <geom/geom_vfs.h>  /* For gb_bufops */
 #include <sys/mutex.h>
-#include <sys/vmmeter.h>  /* For vfs_busy */
 
 #include "exfat.h"
 #include "exfat_fat.h"
@@ -297,7 +297,7 @@ exfat_unmount(struct mount *mp, int mntflags)
     }
 
     /* Try flush with timeout */
-    error = vflush(mp, 0, flags | DOCLOSE, curthread);
+    error = vflush(mp, 0, flags | V_WAIT, curthread);
     if (error && !(flags & FORCECLOSE))
         return error;
 
