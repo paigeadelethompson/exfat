@@ -297,7 +297,7 @@ exfat_unmount(struct mount *mp, int mntflags)
     }
 
     /* Try flush with timeout */
-    error = vflush(mp, 0, flags | VNORESOURCE, curthread);
+    error = vflush(mp, 0, flags | DOCLOSE, curthread);
     if (error && !(flags & FORCECLOSE))
         return error;
 
