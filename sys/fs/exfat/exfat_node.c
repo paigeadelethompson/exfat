@@ -62,7 +62,6 @@ exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
     struct exfat_node *ep;
     struct vnode *vp;
     int error;
-    int retries = 3;  // Max 3 attempts
 
     if (bootverbose)
         printf("exfat: [exfat_get_node] getting node for cluster %u, type %d\n", 
@@ -132,7 +131,6 @@ exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
     /* Get new vnode */
     error = getnewvnode("exfat", mp, &exfat_vnodeops, &vp);
     if (error) {
-        printf("exfat: [exfat_get_node] getnewvnode failed: %d\n", error);
         free(ep, M_EXFAT);
         return error;
     }
