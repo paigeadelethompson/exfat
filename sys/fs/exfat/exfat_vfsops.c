@@ -80,6 +80,13 @@ exfat_mountfs(struct vnode *devvp, struct mount *mp)
         goto error_exit;
     }
 
+    /* Set up basic mount parameters */
+    emp->bytes_per_cluster = EXFAT_SECTOR_SIZE << emp->boot.sectors_per_cluster_shift;
+    emp->root_cluster = le32toh(emp->boot.root_dir_cluster);
+
+    if (bootverbose)
+        printf("exfat: [exfat_mountfs] root directory at cluster %u\n", emp->root_cluster);
+
     if (bootverbose)
         printf("exfat: [exfat_mountfs] initializing bitmap\n");
     error = exfat_init_bitmap(emp);
@@ -235,11 +242,23 @@ exfat_statfs(struct mount *mp, struct statfs *sbp)
     return 0;
 }
 
+static int
+exfat_init(struct vfsconf *vfsp)
+{
+    if (bootverbose)
+        printf("exfat: [exfat_init] initializing filesystem\n");
+   
+    /* Register vnode operations */
+    exfat_init_vnops();
+    return 0;
+}
+
 static struct vfsops exfat_vfsops = {
     .vfs_mount      = exfat_mount,
     .vfs_unmount    = exfat_unmount,
     .vfs_root       = exfat_root,
     .vfs_statfs     = exfat_statfs,
+    .vfs_init       = exfat_init,
 };
 
 MALLOC_DEFINE(M_EXFAT, "exfat", "EXFAT filesystem");
