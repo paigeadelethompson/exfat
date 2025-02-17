@@ -120,39 +120,6 @@ exfat_read_node_info(struct exfat_mount *emp, struct exfat_node *ep)
     return 0;
 }
 
-void
-exfat_node_put(struct exfat_node *ep)
-{
-    struct mount *mp = ep->mp;
-    struct exfat_mount *emp;
-
-    if (bootverbose)
-        printf("exfat: [exfat_node_put] releasing node at cluster %u\n", ep->cluster);
-
-    if (mp == NULL) {
-        printf("exfat: [exfat_node_put] null mount pointer\n");
-        goto just_free;
-    }
-
-    emp = VFSTOEXFAT(mp);
-    if (emp == NULL) {
-        printf("exfat: [exfat_node_put] null exfat mount\n");
-        goto just_free;
-    }
-
-    /* Check if node is still in list before trying to remove it */
-    if (ep->next.le_prev != NULL) {
-        mtx_lock(&emp->hash_mtx.mtx);
-        LIST_REMOVE(ep, next);
-        mtx_unlock(&emp->hash_mtx.mtx);
-    }
-
-just_free:
-    free(ep, M_EXFAT);
-    if (bootverbose)
-        printf("exfat: [exfat_node_put] node released\n");
-}
-
 int
 exfat_init_nodes(struct exfat_mount *emp)
 {
@@ -161,14 +128,14 @@ exfat_init_nodes(struct exfat_mount *emp)
 
     /* Validate mount structure */
     if (emp == NULL) {
-        printf("exfat: null mount structure in init_nodes\n");
+        printf("exfat: [exfat_init_nodes] null mount structure in init_nodes\n");
         return EINVAL;
     }
 
     /* Allocate hash table */
     emp->node_hash = hashinit(EXFAT_HASH_SIZE, M_EXFAT, &emp->node_hash_mask);
     if (emp->node_hash == NULL) {
-        printf("exfat: failed to allocate hash table\n");
+        printf("exfat: [exfat_init_nodes] failed to allocate hash table\n");
         return ENOMEM;
     }
 
@@ -329,22 +296,14 @@ exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
         return EINVAL;
     }
 
-    vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
-    vn_set_state(vp, VSTATE_CONSTRUCTED);
-    
-    if (bootverbose)
-        printf("exfat: [exfat_get_node] reading node info\n");
-
     error = exfat_read_node_info(emp, ep);
     if (error) {
-        if (bootverbose)
-            printf("exfat: [exfat_get_node] read_node_info failed: %d\n", error);
         vrele(vp);
         return error;
     }
 
-    if (bootverbose)
-        printf("exfat: [exfat_get_node] adding node to hash table\n");
+    vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
+    vn_set_state(vp, VSTATE_CONSTRUCTED);
 
     mtx_lock(&emp->hash_mtx.mtx);
     exfat_hash_insert(emp, ep);

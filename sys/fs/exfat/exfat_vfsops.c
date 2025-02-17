@@ -217,10 +217,28 @@ exfat_unmount(struct mount *mp, int mntflags)
 static int
 exfat_root(struct mount *mp, int flags, struct vnode **vpp)
 {
+    struct exfat_mount *emp = VFSTOEXFAT(mp);
+    int error;
+
     if (bootverbose)
         printf("exfat: [exfat_root] getting root vnode\n");
-    struct exfat_mount *emp = VFSTOEXFAT(mp);
-    return exfat_get_node(mp, emp->root_cluster, EXFAT_TYPE_DIR, vpp);
+
+    error = exfat_get_node(mp, emp->root_cluster, EXFAT_TYPE_DIR, vpp);
+    if (error) {
+        printf("exfat: [exfat_root] failed to get root node: %d\n", error);
+        return error;
+    }
+
+    // if (bootverbose)
+    //     printf("exfat: [exfat_root] got root vnode %p, adding reference\n", *vpp);
+
+    // /* Hold reference on root vnode */
+    // vref(*vpp);
+
+    // if (bootverbose)
+    //     printf("exfat: [exfat_root] root vnode setup complete, returning\n");
+
+    return 0;
 }
 
 static int

@@ -118,6 +118,7 @@ struct exfat_mount {
 #define EXFAT_ATTR_VOLUME_ID     0x08
 #define EXFAT_ATTR_DIRECTORY     0x10
 #define EXFAT_ATTR_ARCHIVE       0x20
+#define EXFAT_ATTR_DELETED       0x80    /* Entry is deleted/invalid */
 
 /* Directory entry structures */
 struct exfat_entry_file {

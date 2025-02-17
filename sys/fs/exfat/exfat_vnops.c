@@ -353,14 +353,14 @@ exfat_inactive(struct vop_inactive_args *ap)
     struct exfat_node *ep = VTOE(vp);
 
     if (bootverbose)
-        printf("exfat: [exfat_inactive] inactivating vnode %p, node %p\n", vp, ep);
+        printf("exfat: [exfat_inactive] inactivating vnode %p (type %s) for cluster %u\n",
+               vp, (vp->v_type == VDIR) ? "VDIR" : "VREG", ep->cluster);
 
-    /* Clear v_data before freeing node */
-    vp->v_data = NULL;
-    
-    /* Free the exfat node */
-    exfat_node_put(ep);
+    /* Node is in hash cache, let VFS recycle the vnode */
+    if (bootverbose)
+        printf("exfat: [exfat_inactive] keeping node in cache, recycling vnode\n");
 
+    vrecycle(vp);
     return 0;
 }
 
@@ -372,18 +372,13 @@ exfat_reclaim(struct vop_reclaim_args *ap)
 {
     struct vnode *vp = ap->a_vp;
     struct exfat_node *ep = VTOE(vp);
-    struct exfat_mount *emp = VFSTOEXFAT(vp->v_mount);
 
     if (bootverbose)
         printf("exfat: [exfat_reclaim] reclaiming vnode %p\n", vp);
 
-    mtx_lock(&emp->hash_mtx.mtx);
-    LIST_REMOVE(ep, next);
-    mtx_unlock(&emp->hash_mtx.mtx);
-
-    /* Free resources */
+    /* Disconnect vnode from node */
     vp->v_data = NULL;
-    free(ep, M_EXFAT);
+    ep->vnode = NULL;
 
     return 0;
 }
