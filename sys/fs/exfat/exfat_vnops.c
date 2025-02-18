@@ -43,6 +43,25 @@ static vop_getattr_t    exfat_getattr;
 static vop_inactive_t   exfat_inactive;
 static vop_reclaim_t    exfat_reclaim;
 
+/*
+ * exfat_read_cluster: Read a cluster from disk
+ *
+ * Purpose:
+ * - Read a single cluster from the filesystem
+ * - Handle bad sector detection and recovery
+ * - Verify sector checksums
+ * - Attempt data recovery on errors
+ *
+ * Function calls:
+ * - bread: Read from buffer cache
+ *   https://man.freebsd.org/cgi/man.cgi?query=bread&sektion=9
+ * - brelse: Release buffer
+ *   https://man.freebsd.org/cgi/man.cgi?query=brelse&sektion=9
+ * - memcpy: Copy memory regions
+ *   https://man.freebsd.org/cgi/man.cgi?query=memcpy&sektion=9
+ * - bzero: Zero memory region
+ *   https://man.freebsd.org/cgi/man.cgi?query=bzero&sektion=9
+ */
 static int
 exfat_read_cluster(struct vnode *vp, struct exfat_mount *emp, uint32_t cluster, char *buffer)
 {
@@ -121,7 +140,23 @@ exfat_read_cluster(struct vnode *vp, struct exfat_mount *emp, uint32_t cluster, 
 }
 
 /*
- * Write to a cluster
+ * exfat_write_cluster: Write a cluster to disk
+ *
+ * Purpose:
+ * - Write a single cluster to the filesystem
+ * - Handle bad cluster detection and reallocation
+ * - Update sector checksums
+ * - Attempt error recovery on write failures
+ *
+ * Function calls:
+ * - bread: Read from buffer cache
+ *   https://man.freebsd.org/cgi/man.cgi?query=bread&sektion=9
+ * - bwrite: Write to buffer cache
+ *   https://man.freebsd.org/cgi/man.cgi?query=bwrite&sektion=9
+ * - brelse: Release buffer
+ *   https://man.freebsd.org/cgi/man.cgi?query=brelse&sektion=9
+ * - memcpy: Copy memory regions
+ *   https://man.freebsd.org/cgi/man.cgi?query=memcpy&sektion=9
  */
 static int
 exfat_write_cluster(struct vnode *vp, struct exfat_mount *emp, uint32_t cluster, char *buffer)
@@ -198,7 +233,22 @@ exfat_write_cluster(struct vnode *vp, struct exfat_mount *emp, uint32_t cluster,
 }
 
 /*
- * Read file data
+ * exfat_read: Read file data
+ *
+ * Purpose:
+ * - Handle read(2) system call
+ * - Read file data from clusters
+ * - Update access time
+ * - Handle partial cluster reads
+ *
+ * Function calls:
+ * - exfat_read_cluster: Read cluster data (local)
+ * - exfat_cluster_next: Get next cluster in chain
+ *   From exfat_fat.c
+ * - uiomove: Move data to/from user space
+ *   https://man.freebsd.org/cgi/man.cgi?query=uiomove&sektion=9
+ * - exfat_find_dirent: Find directory entry
+ *   From exfat_node.c
  */
 static int
 exfat_read(struct vop_read_args *ap)
@@ -301,7 +351,19 @@ out:
 }
 
 /*
- * Get file attributes
+ * exfat_getattr: Get file attributes
+ *
+ * Purpose:
+ * - Handle stat(2) system call
+ * - Fill in vnode attributes
+ * - Return file size and timestamps
+ * - Remove node from hash table
+ *
+ * Function calls:
+ * - VATTR_NULL: Initialize attribute structure
+ *   https://man.freebsd.org/cgi/man.cgi?query=VATTR_NULL&sektion=9
+ * - dev2udev: Get unique device ID
+ *   https://man.freebsd.org/cgi/man.cgi?query=dev2udev&sektion=9
  */
 static int
 exfat_getattr(struct vop_getattr_args *ap)
@@ -344,7 +406,16 @@ exfat_getattr(struct vop_getattr_args *ap)
 }
 
 /*
- * Handle inactive vnode
+ * exfat_inactive: Handle inactive vnode
+ *
+ * Purpose:
+ * - Called when vnode reference count reaches zero
+ * - Recycle vnode if no longer needed
+ * - Keep node in cache for later reuse
+ *
+ * Function calls:
+ * - vrecycle: Recycle vnode
+ *   https://man.freebsd.org/cgi/man.cgi?query=vrecycle&sektion=9
  */
 static int
 exfat_inactive(struct vop_inactive_args *ap)
@@ -365,7 +436,15 @@ exfat_inactive(struct vop_inactive_args *ap)
 }
 
 /*
- * Reclaim vnode
+ * exfat_reclaim: Reclaim vnode
+ *
+ * Purpose:
+ * - Free vnode resources
+ * - Disconnect vnode from node
+ * - Called before vnode is reused
+ *
+ * Function calls:
+ * - None
  */
 static int
 exfat_reclaim(struct vop_reclaim_args *ap)
@@ -384,7 +463,16 @@ exfat_reclaim(struct vop_reclaim_args *ap)
 }
 
 /*
- * Read directory entries
+ * exfat_readdir: Read directory entries
+ *
+ * Purpose:
+ * - Handle readdir(3) system call
+ * - Return directory entries to user
+ * - Skip deleted entries
+ * - Handle . and .. entries
+ *
+ * Function calls:
+ * - None currently (returns empty directory)
  */
 static int
 exfat_readdir(struct vop_readdir_args *ap)
@@ -397,7 +485,23 @@ exfat_readdir(struct vop_readdir_args *ap)
 }
 
 /*
- * Write file data
+ * exfat_write: Write file data
+ *
+ * Purpose:
+ * - Handle write(2) system call
+ * - Write file data to clusters
+ * - Extend file if needed
+ * - Update modification time
+ * - Handle partial cluster writes
+ *
+ * Function calls:
+ * - exfat_read_cluster: Read cluster data (local)
+ * - exfat_write_cluster: Write cluster data (local)
+ * - exfat_cluster_next: Get next cluster in chain
+ *   From exfat_fat.c
+ * - uiomove: Move data to/from user space
+ *   https://man.freebsd.org/cgi/man.cgi?query=uiomove&sektion=9
+ * - exfat_extend_file: Extend file size (local)
  */
 static int
 exfat_write(struct vop_write_args *ap)
@@ -493,7 +597,21 @@ out:
 }
 
 /*
- * Create a new file
+ * exfat_create: Create new file
+ *
+ * Purpose:
+ * - Handle create(2) system call
+ * - Allocate first cluster
+ * - Create directory entry
+ * - Get vnode for new file
+ *
+ * Function calls:
+ * - exfat_cluster_alloc: Allocate new cluster
+ *   From exfat_fat.c
+ * - exfat_create_entry: Create directory entry
+ *   From exfat_node.c
+ * - exfat_get_node: Get vnode for cluster
+ *   From exfat_node.c
  */
 static int
 exfat_create(struct vop_create_args *ap)
@@ -544,7 +662,23 @@ exfat_create(struct vop_create_args *ap)
 }
 
 /*
- * Create a new directory
+ * exfat_mkdir: Create new directory
+ *
+ * Purpose:
+ * - Handle mkdir(2) system call
+ * - Allocate first cluster
+ * - Create directory entry
+ * - Initialize directory cluster
+ * - Get vnode for new directory
+ *
+ * Function calls:
+ * - exfat_cluster_alloc: Allocate new cluster
+ *   From exfat_fat.c
+ * - exfat_create_entry: Create directory entry
+ *   From exfat_node.c
+ * - exfat_init_directory: Initialize directory cluster (local)
+ * - exfat_get_node: Get vnode for cluster
+ *   From exfat_node.c
  */
 static int
 exfat_mkdir(struct vop_mkdir_args *ap)
@@ -602,7 +736,21 @@ exfat_mkdir(struct vop_mkdir_args *ap)
 }
 
 /*
- * Remove a file
+ * exfat_remove: Remove file
+ *
+ * Purpose:
+ * - Handle unlink(2) system call
+ * - Find and remove directory entry
+ * - Free file clusters
+ * - Handle error recovery
+ *
+ * Function calls:
+ * - exfat_scan_directory: Scan directory entries
+ *   From exfat_node.c
+ * - exfat_remove_entry: Remove directory entry
+ *   From exfat_node.c
+ * - exfat_cluster_free: Free cluster chain
+ *   From exfat_fat.c
  */
 static int
 exfat_remove(struct vop_remove_args *ap)
@@ -649,7 +797,22 @@ exfat_remove(struct vop_remove_args *ap)
 }
 
 /*
- * Remove a directory
+ * exfat_rmdir: Remove directory
+ *
+ * Purpose:
+ * - Handle rmdir(2) system call
+ * - Verify directory is empty
+ * - Find and remove directory entry
+ * - Free directory cluster
+ * - Handle error recovery
+ *
+ * Function calls:
+ * - exfat_scan_directory: Scan directory entries
+ *   From exfat_node.c
+ * - exfat_remove_entry: Remove directory entry
+ *   From exfat_node.c
+ * - exfat_cluster_free: Free cluster chain
+ *   From exfat_fat.c
  */
 static int
 exfat_rmdir(struct vop_rmdir_args *ap)
@@ -706,7 +869,22 @@ exfat_rmdir(struct vop_rmdir_args *ap)
 }
 
 /*
- * Rename a file/directory
+ * exfat_rename: Rename file/directory
+ *
+ * Purpose:
+ * - Handle rename(2) system call
+ * - Find source directory entry
+ * - Create new directory entry
+ * - Remove old directory entry
+ * - Handle cross-directory renames
+ *
+ * Function calls:
+ * - exfat_scan_directory: Scan directory entries
+ *   From exfat_node.c
+ * - exfat_create_entry: Create directory entry
+ *   From exfat_node.c
+ * - exfat_remove_entry: Remove directory entry
+ *   From exfat_node.c
  */
 static int
 exfat_rename(struct vop_rename_args *ap)
@@ -795,6 +973,19 @@ exfat_rename(struct vop_rename_args *ap)
     return ENOENT;
 }
 
+/*
+ * exfat_cachedlookup: Lookup name in directory
+ *
+ * Purpose:
+ * - Handle pathname lookup
+ * - Search directory for name
+ * - Return vnode for found entry
+ * - Used by name cache
+ *
+ * Function calls:
+ * - exfat_lookup_node: Find node by name
+ *   From exfat_node.c
+ */
 static int
 exfat_cachedlookup(struct vop_cachedlookup_args *ap)
 {
@@ -808,6 +999,18 @@ exfat_cachedlookup(struct vop_cachedlookup_args *ap)
     return error;
 }
 
+/*
+ * exfat_access_wrapper: Check access permissions
+ *
+ * Purpose:
+ * - Handle access(2) system call
+ * - Check file permissions
+ * - Wrapper around exfat_access
+ *
+ * Function calls:
+ * - exfat_access: Check access permissions
+ *   From exfat_node.c
+ */
 static int
 exfat_access_wrapper(struct vop_access_args *ap)
 {
@@ -822,7 +1025,18 @@ exfat_access_wrapper(struct vop_access_args *ap)
 }
 
 /*
- * Find a directory entry by cluster number
+ * exfat_find_dirent: Find directory entry by cluster
+ *
+ * Purpose:
+ * - Find directory entry for given cluster
+ * - Return entry set and offset
+ * - Used for updating timestamps
+ *
+ * Function calls:
+ * - exfat_scan_directory: Scan directory entries
+ *   From exfat_node.c
+ * - exfat_next_dirent: Get next directory entry
+ *   From exfat_node.c
  */
 int
 exfat_find_dirent(struct vnode *vp, uint32_t cluster,
@@ -864,7 +1078,15 @@ exfat_find_dirent(struct vnode *vp, uint32_t cluster,
 }
 
 /*
- * Handle open operation
+ * exfat_open: Handle open operation
+ *
+ * Purpose:
+ * - Handle open(2) system call
+ * - Check file type and access mode
+ * - Verify write access on read-only mount
+ *
+ * Function calls:
+ * - None
  */
 static int
 exfat_open(struct vop_open_args *ap)
@@ -890,7 +1112,16 @@ exfat_open(struct vop_open_args *ap)
 }
 
 /*
- * Handle close operation
+ * exfat_close: Handle close operation
+ *
+ * Purpose:
+ * - Handle close(2) system call
+ * - Flush dirty data
+ * - Sync file if needed
+ *
+ * Function calls:
+ * - VOP_FSYNC: Sync file to disk
+ *   https://man.freebsd.org/cgi/man.cgi?query=VOP_FSYNC&sektion=9
  */
 static int
 exfat_close(struct vop_close_args *ap)
@@ -909,7 +1140,20 @@ exfat_close(struct vop_close_args *ap)
 }
 
 /*
- * Sync file to disk
+ * exfat_fsync: Sync file to disk
+ *
+ * Purpose:
+ * - Handle fsync(2) system call
+ * - Flush file data
+ * - Update timestamps
+ * - Write directory entry
+ *
+ * Function calls:
+ * - vn_fsync_buf: Sync buffer cache
+ *   https://man.freebsd.org/cgi/man.cgi?query=vn_fsync_buf&sektion=9
+ * - exfat_find_dirent: Find directory entry (local)
+ * - exfat_write_direntry: Write directory entry
+ *   From exfat_node.c
  */
 static int
 exfat_fsync(struct vop_fsync_args *ap)
@@ -957,7 +1201,18 @@ exfat_fsync(struct vop_fsync_args *ap)
 }
 
 /*
- * Handle buffer I/O
+ * exfat_strategy: Handle buffer I/O
+ *
+ * Purpose:
+ * - Handle buffer I/O requests
+ * - Map file offset to device sector
+ * - Pass I/O to device
+ *
+ * Function calls:
+ * - exfat_cluster_next: Get next cluster in chain
+ *   From exfat_fat.c
+ * - VOP_STRATEGY: Pass I/O to device
+ *   https://man.freebsd.org/cgi/man.cgi?query=VOP_STRATEGY&sektion=9
  */
 static int
 exfat_strategy(struct vop_strategy_args *ap)
@@ -1002,7 +1257,16 @@ exfat_strategy(struct vop_strategy_args *ap)
 }
 
 /*
- * Extend file to specified size
+ * exfat_extend_file: Extend file size
+ *
+ * Purpose:
+ * - Allocate additional clusters
+ * - Update file size
+ * - Handle allocation errors
+ *
+ * Function calls:
+ * - exfat_cluster_alloc_sequence: Allocate cluster chain
+ *   From exfat_fat.c
  */
 int
 exfat_extend_file(struct vnode *vp, off_t new_size)
@@ -1034,7 +1298,20 @@ exfat_extend_file(struct vnode *vp, off_t new_size)
 }
 
 /*
- * Initialize a new directory cluster
+ * exfat_init_directory: Initialize directory cluster
+ *
+ * Purpose:
+ * - Clear new directory cluster
+ * - Prepare for directory entries
+ * - Handle I/O errors
+ *
+ * Function calls:
+ * - bread: Read from buffer cache
+ *   https://man.freebsd.org/cgi/man.cgi?query=bread&sektion=9
+ * - bwrite: Write to buffer cache
+ *   https://man.freebsd.org/cgi/man.cgi?query=bwrite&sektion=9
+ * - bzero: Zero memory region
+ *   https://man.freebsd.org/cgi/man.cgi?query=bzero&sektion=9
  */
 int
 exfat_init_directory(struct exfat_mount *emp, uint32_t cluster)
@@ -1070,7 +1347,22 @@ exfat_init_directory(struct exfat_mount *emp, uint32_t cluster)
 #define EXFAT_EH_CLUSTER   0x10    /* Bad cluster detected */
 
 /*
- * Handle I/O errors and attempt recovery
+ * exfat_handle_error: Handle I/O errors
+ *
+ * Purpose:
+ * - Handle disk I/O errors
+ * - Mark volume as dirty
+ * - Mark bad clusters
+ * - Schedule filesystem check
+ * - Attempt error recovery
+ *
+ * Function calls:
+ * - bread/bwrite: Buffer cache operations
+ *   https://man.freebsd.org/cgi/man.cgi?query=bread&sektion=9
+ * - exfat_mark_cluster_bad: Mark cluster as bad
+ *   From exfat_fat.c
+ * - exfat_cluster_alloc: Allocate replacement cluster
+ *   From exfat_fat.c
  */
 int
 exfat_handle_error(struct exfat_mount *emp, struct vnode *vp, int error, int flags)
@@ -1133,6 +1425,17 @@ exfat_handle_error(struct exfat_mount *emp, struct vnode *vp, int error, int fla
     return error;
 }
 
+/*
+ * exfat_init_vnops: Initialize vnode operations
+ *
+ * Purpose:
+ * - Register vnode operations vector
+ * - Called during filesystem initialization
+ *
+ * Function calls:
+ * - vfs_vector_op_register: Register vnops vector
+ *   https://man.freebsd.org/cgi/man.cgi?query=vfs_vector_op_register&sektion=9
+ */
 int
 exfat_init_vnops(void)
 {

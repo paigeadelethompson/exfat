@@ -20,10 +20,30 @@
 #include "exfat.h"
 #include "exfat_node.h"
 
+/*
+ * Mount options that can be specified
+ */
 static const char *exfat_opts[] = {
     "from", "async", "noatime", "force", "ro", "rw", NULL
 };
 
+/*
+ * exfat_mountfs: Mount an exFAT filesystem
+ *
+ * Purpose:
+ * - Initialize filesystem structures
+ * - Read and validate boot sector
+ * - Set up mount parameters
+ * - Initialize bitmap and upcase table
+ * - Handle mount errors
+ *
+ * Function calls:
+ * - bread/brelse: Buffer cache operations
+ * - g_vfs_open: Open GEOM provider
+ * - exfat_init_bitmap: Initialize allocation bitmap
+ * - exfat_init_upcase: Initialize upcase table
+ * - exfat_init_nodes: Initialize node hash table
+ */
 static int
 exfat_mountfs(struct vnode *devvp, struct mount *mp)
 {
@@ -133,50 +153,103 @@ error_exit:
     return error;
 }
 
+/*
+ * exfat_mount: Handle mount(2) system call
+ * 
+ * Purpose:
+ * - Process mount options
+ * - Open device vnode
+ * - Initialize filesystem
+ * - Handle mount errors
+ *
+ * Function calls:
+ * - vfs_filteropt: Filter mount options
+ * - namei: Lookup device path
+ * - exfat_mountfs: Mount filesystem
+ */
 static int
 exfat_mount(struct mount *mp)
 {
-    if (bootverbose)
-        printf("exfat: [exfat_mount] mounting filesystem\n");
     struct vnode *devvp;
     struct nameidata nd;
     char *from;
     int error;
 
-    error = vfs_filteropt(mp->mnt_optnew, exfat_opts);
-    if (error)
-        return error;
+    if (bootverbose)
+        printf("exfat: [exfat_mount] mounting filesystem\n");
 
-    if (mp->mnt_flag & MNT_UPDATE)
+    error = vfs_filteropt(mp->mnt_optnew, exfat_opts);
+    if (error) {
+        if (bootverbose)
+            printf("exfat: [exfat_mount] invalid mount options\n");
+        return error;
+    }
+
+    if (mp->mnt_flag & MNT_UPDATE) {
+        if (bootverbose)
+            printf("exfat: [exfat_mount] filesystem update not supported\n");
         return EOPNOTSUPP;
+    }
 
     from = vfs_getopts(mp->mnt_optnew, "from", &error);
-    if (error)
+    if (error) {
+        if (bootverbose)
+            printf("exfat: [exfat_mount] missing 'from' option\n");
         return error;
+    }
 
-    NDINIT(&nd, LOOKUP, FOLLOW | LOCKLEAF, UIO_SYSSPACE, from);
+    if (bootverbose)
+        printf("exfat: [exfat_mount] looking up device %s\n", from);
+
+    NDINIT(&nd, LOOKUP, FOLLOW, UIO_SYSSPACE, from);
     error = namei(&nd);
-    if (error)
+    if (error) {
+        if (bootverbose)
+            printf("exfat: [exfat_mount] device lookup failed: %d\n", error);
         return error;
+    }
 
     devvp = nd.ni_vp;
     NDFREE_PNBUF(&nd);
+    vn_lock(devvp, LK_EXCLUSIVE | LK_RETRY | LK_NOWITNESS);
 
     if (!vn_isdisk(devvp)) {
+        if (bootverbose)
+            printf("exfat: [exfat_mount] not a block device\n");
         vput(devvp);
         return ENOTBLK;
     }
 
     error = exfat_mountfs(devvp, mp);
     if (error) {
+        if (bootverbose)
+            printf("exfat: [exfat_mount] mount failed: %d\n", error);
         vput(devvp);
         return error;
     }
 
+    if (bootverbose)
+        printf("exfat: [exfat_mount] mounted successfully\n");
+
     vfs_mountedfrom(mp, from);
+    VOP_UNLOCK(devvp);
     return 0;
 }
 
+/*
+ * exfat_unmount: Handle unmount(2) system call
+ *
+ * Purpose:
+ * - Flush cached data
+ * - Close device vnode
+ * - Free filesystem resources
+ * - Handle unmount errors
+ *
+ * Function calls:
+ * - vflush: Flush vnodes
+ * - g_vfs_close: Close GEOM provider
+ * - exfat_destroy_nodes: Free node hash table
+ */
 static int
 exfat_unmount(struct mount *mp, int mntflags)
 {
@@ -214,6 +287,17 @@ exfat_unmount(struct mount *mp, int mntflags)
     return error;
 }
 
+/*
+ * exfat_root: Get root directory vnode
+ *
+ * Purpose:
+ * - Return vnode for root directory
+ * - Initialize root vnode if needed
+ * - Handle root lookup errors
+ *
+ * Function calls:
+ * - exfat_get_node: Get vnode for cluster
+ */
 static int
 exfat_root(struct mount *mp, int flags, struct vnode **vpp)
 {
@@ -241,6 +325,17 @@ exfat_root(struct mount *mp, int flags, struct vnode **vpp)
     return 0;
 }
 
+/*
+ * exfat_statfs: Get filesystem statistics
+ *
+ * Purpose:
+ * - Return filesystem information
+ * - Calculate free space
+ * - Set filesystem parameters
+ *
+ * Function calls:
+ * - None (uses cached mount info)
+ */
 static int
 exfat_statfs(struct mount *mp, struct statfs *sbp)
 {
@@ -260,6 +355,17 @@ exfat_statfs(struct mount *mp, struct statfs *sbp)
     return 0;
 }
 
+/*
+ * exfat_init: Initialize filesystem
+ *
+ * Purpose:
+ * - Register vnode operations
+ * - Initialize filesystem structures
+ * - Called during module load
+ *
+ * Function calls:
+ * - exfat_init_vnops: Initialize vnode operations
+ */
 static int
 exfat_init(struct vfsconf *vfsp)
 {

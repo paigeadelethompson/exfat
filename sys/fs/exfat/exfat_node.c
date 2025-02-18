@@ -34,7 +34,15 @@
 #include "exfat_node.h"
 
 /*
- * Initialize the node hash table
+ * exfat_node_init: Initialize node subsystem
+ *
+ * Purpose:
+ * - One-time initialization of node management
+ * - Called during filesystem module load
+ * - Currently a no-op as initialization happens per-mount
+ *
+ * Function calls:
+ * - None
  */
 int
 exfat_node_init(void)
@@ -43,7 +51,15 @@ exfat_node_init(void)
 }
 
 /*
- * Clean up the node hash table
+ * exfat_node_uninit: Clean up node subsystem
+ *
+ * Purpose:
+ * - One-time cleanup of node management
+ * - Called during filesystem module unload
+ * - Currently a no-op as cleanup happens per-mount
+ *
+ * Function calls:
+ * - None
  */
 void
 exfat_node_uninit(void)
@@ -52,9 +68,20 @@ exfat_node_uninit(void)
     return;
 }
 
-
 /*
- * Read node information from directory entry
+ * exfat_read_node_info: Read node metadata from directory entry
+ *
+ * Purpose:
+ * - Read file/directory metadata from disk
+ * - Parse file and stream directory entries
+ * - Fill in node information structure
+ * - Handle special case for root directory
+ *
+ * Function calls:
+ * - bread: Read from buffer cache
+ *   https://man.freebsd.org/cgi/man.cgi?query=bread&sektion=9
+ * - brelse: Release buffer
+ *   https://man.freebsd.org/cgi/man.cgi?query=brelse&sektion=9
  */
 int
 exfat_read_node_info(struct exfat_mount *emp, struct exfat_node *ep)
@@ -120,6 +147,20 @@ exfat_read_node_info(struct exfat_mount *emp, struct exfat_node *ep)
     return 0;
 }
 
+/*
+ * exfat_init_nodes: Initialize per-mount node management
+ *
+ * Purpose:
+ * - Initialize node hash table for mount
+ * - Set up node mutex
+ * - Called during filesystem mount
+ *
+ * Function calls:
+ * - hashinit: Create hash table
+ *   https://man.freebsd.org/cgi/man.cgi?query=hashinit&sektion=9
+ * - mtx_init: Initialize mutex
+ *   https://man.freebsd.org/cgi/man.cgi?query=mtx_init&sektion=9
+ */
 int
 exfat_init_nodes(struct exfat_mount *emp)
 {
@@ -151,6 +192,23 @@ exfat_init_nodes(struct exfat_mount *emp)
     return 0;
 }
 
+/*
+ * exfat_destroy_nodes: Clean up per-mount node management
+ *
+ * Purpose:
+ * - Free all nodes in hash table
+ * - Destroy hash table
+ * - Clean up node mutex
+ * - Called during filesystem unmount
+ *
+ * Function calls:
+ * - hashdestroy: Free hash table
+ *   https://man.freebsd.org/cgi/man.cgi?query=hashdestroy&sektion=9
+ * - mtx_destroy: Clean up mutex
+ *   https://man.freebsd.org/cgi/man.cgi?query=mtx_destroy&sektion=9
+ * - free: Free memory
+ *   https://man.freebsd.org/cgi/man.cgi?query=free&sektion=9
+ */
 void
 exfat_destroy_nodes(struct exfat_mount *emp)
 {
@@ -173,7 +231,18 @@ exfat_destroy_nodes(struct exfat_mount *emp)
     }
 }
 
-/* Node lookup function */
+/*
+ * exfat_hash_lookup: Look up node in hash table
+ *
+ * Purpose:
+ * - Find node by cluster number
+ * - Used to locate existing nodes
+ * - Called with node mutex held
+ *
+ * Function calls:
+ * - LIST_FOREACH: Traverse hash chain
+ *   https://man.freebsd.org/cgi/man.cgi?query=queue&sektion=3
+ */
 struct exfat_node *
 exfat_hash_lookup(struct exfat_mount *emp, uint32_t cluster)
 {
@@ -187,7 +256,18 @@ exfat_hash_lookup(struct exfat_mount *emp, uint32_t cluster)
     return NULL;
 }
 
-/* Node insert function */
+/*
+ * exfat_hash_insert: Insert node into hash table
+ *
+ * Purpose:
+ * - Add new node to hash table
+ * - Called with node mutex held
+ * - Used when creating new nodes
+ *
+ * Function calls:
+ * - LIST_INSERT_HEAD: Add to hash chain
+ *   https://man.freebsd.org/cgi/man.cgi?query=queue&sektion=3
+ */
 void
 exfat_hash_insert(struct exfat_mount *emp, struct exfat_node *ep)
 {
@@ -195,7 +275,18 @@ exfat_hash_insert(struct exfat_mount *emp, struct exfat_node *ep)
     LIST_INSERT_HEAD(&emp->node_hash[hash_idx], ep, next);
 }
 
-/* Node remove function */
+/*
+ * exfat_hash_remove: Remove node from hash table
+ *
+ * Purpose:
+ * - Remove node from hash table
+ * - Called with node mutex held
+ * - Used when freeing nodes
+ *
+ * Function calls:
+ * - LIST_REMOVE: Remove from hash chain
+ *   https://man.freebsd.org/cgi/man.cgi?query=queue&sektion=3
+ */
 void
 exfat_hash_remove(struct exfat_mount *emp, struct exfat_node *ep)
 {
@@ -203,111 +294,252 @@ exfat_hash_remove(struct exfat_mount *emp, struct exfat_node *ep)
 }
 
 /*
- * Get a node from hash table or create new one
+ * exfat_find_node: Look up existing node in hash table
+ *
+ * Purpose:
+ * - Find node by cluster number in hash table
+ * - Get reference to associated vnode
+ * - Lock vnode for exclusive access
+ * - Used for accessing existing filesystem objects
+ *
+ * Function calls:
+ * - mtx_lock/mtx_unlock: Lock hash table mutex
+ *   https://man.freebsd.org/cgi/man.cgi?query=mtx_lock&sektion=9
+ * - exfat_hash_lookup: Find node in hash (local)
+ * - vref: Increment vnode reference
+ *   https://man.freebsd.org/cgi/man.cgi?query=vref&sektion=9
+ * - vget: Get and lock vnode
+ *   https://man.freebsd.org/cgi/man.cgi?query=vget&sektion=9
  */
-int
-exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
+static int
+exfat_find_node(struct exfat_mount *emp, uint32_t cluster, struct vnode **vpp)
 {
-    struct exfat_mount *emp;
     struct exfat_node *ep;
     struct vnode *vp;
     int error;
 
     if (bootverbose)
-        printf("exfat: [exfat_get_node] getting node for cluster %u, type %d\n", 
-               cluster, type);
+        printf("exfat: [exfat_find_node] looking up cluster %u\n", cluster);
 
-    /* Basic parameter validation */
-    if (mp == NULL || vpp == NULL)
-        return EINVAL;
-
-    emp = VFSTOEXFAT(mp);
-    if (emp == NULL)
-        return EINVAL;
-
-    /* Validate cluster number - allow root directory cluster */
-    if (cluster < EXFAT_CLUSTER_FIRST && cluster != emp->root_cluster)
-        return EINVAL;
-
-    /* Check hash table first */
     mtx_lock(&emp->hash_mtx.mtx);
+    if (bootverbose)
+        printf("exfat: [exfat_find_node] searching hash table\n");
+
     ep = exfat_hash_lookup(emp, cluster);
-    if (ep != NULL) {
+    if (ep == NULL) {
         if (bootverbose)
-            printf("exfat: [exfat_get_node] found existing node in hash table\n");
-        vp = ETOV(ep);
+            printf("exfat: [exfat_find_node] cluster %u not found\n", cluster);
         mtx_unlock(&emp->hash_mtx.mtx);
-        error = vget(vp, LK_EXCLUSIVE);
-        if (bootverbose)
-            printf("exfat: [exfat_get_node] vget returned %d\n", error);
-        if (error == 0)
-            *vpp = vp;
-        return error;
+        return ENOENT;
     }
+    
+    if (bootverbose)
+        printf("exfat: [exfat_find_node] found node for cluster %u\n", cluster);
+
+    vp = ETOV(ep);
+    vref(vp);
     mtx_unlock(&emp->hash_mtx.mtx);
 
     if (bootverbose)
-        printf("exfat: [exfat_get_node] allocating new node\n");
+        printf("exfat: [exfat_find_node] getting exclusive lock on vnode\n");
 
-    /* Create new node */
+    error = vget(vp, LK_EXCLUSIVE | LK_NOWITNESS);
+    if (error) {
+        if (bootverbose)
+            printf("exfat: [exfat_find_node] vget failed: %d\n", error);
+        vrele(vp);
+        return error;
+    }
+    
+    if (bootverbose)
+        printf("exfat: [exfat_find_node] returning locked vnode\n");
+
+    *vpp = vp;
+    return 0;
+}
+
+/*
+ * exfat_create_node: Create and initialize new node and vnode
+ *
+ * Purpose:
+ * - Allocate new exFAT node structure
+ * - Create associated vnode
+ * - Initialize both structures
+ * - Read node metadata from disk
+ * - Used when creating new filesystem objects
+ *
+ * Function calls:
+ * - malloc: Allocate node memory
+ *   https://man.freebsd.org/cgi/man.cgi?query=malloc&sektion=9
+ * - getnewvnode: Create new vnode
+ *   https://man.freebsd.org/cgi/man.cgi?query=getnewvnode&sektion=9
+ * - vn_lock: Lock vnode
+ *   https://man.freebsd.org/cgi/man.cgi?query=vn_lock&sektion=9
+ * - vn_unlock: Release vnode lock
+ *   https://man.freebsd.org/cgi/man.cgi?query=vn_unlock&sektion=9
+ * - vrele: Release vnode reference
+ *   https://man.freebsd.org/cgi/man.cgi?query=vrele&sektion=9
+ * - exfat_read_node_info: Read node metadata (local)
+ */
+static int
+exfat_create_node(struct exfat_mount *emp, uint32_t cluster, int type,
+                  struct vnode **vpp)
+{
+    struct exfat_node *ep;
+    struct vnode *vp;
+    int error;
+
+    if (bootverbose)
+        printf("exfat: [exfat_create_node] creating node for cluster %u, type %d\n", 
+               cluster, type);
+
+    /* Allocate and initialize node */
+    if (bootverbose)
+        printf("exfat: [exfat_create_node] allocating node structure\n");
+
     ep = malloc(sizeof(*ep), M_EXFAT, M_WAITOK | M_ZERO);
     if (ep == NULL) {
         if (bootverbose)
-            printf("exfat: [exfat_get_node] malloc failed\n");
+            printf("exfat: [exfat_create_node] malloc failed\n");
         return ENOMEM;
     }
 
     ep->cluster = cluster;
     ep->type = type;
-    ep->mp = mp;
+    ep->mp = emp->mp;
 
+    /* Create and lock vnode */
     if (bootverbose)
-        printf("exfat: [exfat_get_node] getting new vnode\n");
+        printf("exfat: [exfat_create_node] creating new vnode\n");
 
-    error = getnewvnode("exfat", mp, &exfat_vnodeops, &vp);
+    error = getnewvnode("exfat", emp->mp, &exfat_vnodeops, &vp);
     if (error) {
         if (bootverbose)
-            printf("exfat: [exfat_get_node] getnewvnode failed: %d\n", error);
+            printf("exfat: [exfat_create_node] getnewvnode failed: %d\n", error);
         free(ep, M_EXFAT);
         return error;
     }
 
     if (bootverbose)
-        printf("exfat: [exfat_get_node] linking node and vnode\n");
+        printf("exfat: [exfat_create_node] locking new vnode\n");
 
-    vp->v_data = ep;
-    ep->vnode = vp;
-
-    if (bootverbose)
-        printf("exfat: [exfat_get_node] setting vnode type to %s\n", 
-               (type == EXFAT_TYPE_FILE) ? "VREG" : "VDIR");
-
-    switch (type) {
-    case EXFAT_TYPE_FILE:
-        vp->v_type = VREG;
-        break;
-    case EXFAT_TYPE_DIR:
-        vp->v_type = VDIR;
-        break;
-    default:
-        if (bootverbose)
-            printf("exfat: [exfat_get_node] invalid type %d\n", type);
-        vrele(vp);
-        return EINVAL;
-    }
-
-    error = exfat_read_node_info(emp, ep);
+    error = vn_lock(vp, LK_EXCLUSIVE | LK_RETRY | LK_NOWITNESS);
     if (error) {
+        if (bootverbose)
+            printf("exfat: [exfat_create_node] vnode lock failed: %d\n", error);
         vrele(vp);
+        free(ep, M_EXFAT);
         return error;
     }
 
-    vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
-    vn_set_state(vp, VSTATE_CONSTRUCTED);
+    if (bootverbose)
+        printf("exfat: [exfat_create_node] linking node and vnode\n");
 
+    /* Link structures */
+    vp->v_data = ep;
+    ep->vnode = vp;
+    vp->v_type = (type == EXFAT_TYPE_FILE) ? VREG : VDIR;
+
+    /* Read metadata */
+    if (bootverbose)
+        printf("exfat: [exfat_create_node] reading node metadata\n");
+
+    error = exfat_read_node_info(emp, ep);
+    if (error) {
+        if (bootverbose)
+            printf("exfat: [exfat_create_node] read node info failed: %d\n", error);
+        vrele(vp);
+        free(ep, M_EXFAT);
+        return error;
+    }
+
+    if (bootverbose)
+        printf("exfat: [exfat_create_node] node creation complete\n");
+
+    *vpp = vp;
+    return 0;
+}
+
+/*
+ * exfat_get_node: Main entry point to get or create node
+ *
+ * Purpose:
+ * - Validate request parameters
+ * - Try to find existing node first
+ * - Create new node if not found
+ * - Add new nodes to hash table
+ * - Return locked vnode for filesystem operations
+ * - Core function for all filesystem object access
+ *
+ * Function calls:
+ * - exfat_find_node: Look up existing node (local)
+ * - exfat_create_node: Create new node (local)
+ * - exfat_hash_lookup: Check for races (local)
+ * - exfat_hash_insert: Add to hash table (local)
+ * - mtx_lock/mtx_unlock: Lock hash table mutex
+ *   https://man.freebsd.org/cgi/man.cgi?query=mtx_lock&sektion=9
+ * - vn_unlock: Release vnode lock
+ *   https://man.freebsd.org/cgi/man.cgi?query=vn_unlock&sektion=9
+ * - vrele: Release vnode reference
+ *   https://man.freebsd.org/cgi/man.cgi?query=vrele&sektion=9
+ * - vn_set_state: Set vnode state
+ *   https://man.freebsd.org/cgi/man.cgi?query=vn_set_state&sektion=9
+ *
+ * Returns: 0 with locked vnode in *vpp on success, error code on failure.
+ * Note: Caller is responsible for unlocking the returned vnode.
+ */
+int
+exfat_get_node(struct mount *mp, uint32_t cluster, int type, struct vnode **vpp)
+{
+    struct exfat_mount *emp;
+    struct vnode *vp;
+    int error;
+
+    if (bootverbose)
+        printf("exfat: [exfat_get_node] request for cluster %u, type %d\n", 
+               cluster, type);
+
+    /* Validate parameters */
+    if (mp == NULL || vpp == NULL) {
+        if (bootverbose)
+            printf("exfat: [exfat_get_node] invalid parameters\n");
+        return EINVAL;
+    }
+    emp = VFSTOEXFAT(mp);
+    if (emp == NULL) {
+        if (bootverbose)
+            printf("exfat: [exfat_get_node] invalid mount\n");
+        return EINVAL;
+    }
+    if (cluster < EXFAT_CLUSTER_FIRST && cluster != emp->root_cluster) {
+        if (bootverbose)
+            printf("exfat: [exfat_get_node] invalid cluster %u\n", cluster);
+        return EINVAL;
+    }
+
+    /* Try to find existing node first */
+    error = exfat_find_node(emp, cluster, &vp);
+    if (error != ENOENT) {
+        if (error == 0) {
+            if (bootverbose)
+                printf("exfat: [exfat_get_node] found existing node\n");
+            *vpp = vp;
+        } else if (bootverbose)
+            printf("exfat: [exfat_get_node] error finding node: %d\n", error);
+        return error;
+    }
+
+    /* No existing node, create new one */
+    error = exfat_create_node(emp, cluster, type, &vp);
+    if (error)
+        return error;
+
+    /* Add to hash table */
     mtx_lock(&emp->hash_mtx.mtx);
-    exfat_hash_insert(emp, ep);
+    exfat_hash_insert(emp, vp->v_data);
     mtx_unlock(&emp->hash_mtx.mtx);
+
+    vn_set_state(vp, VSTATE_CONSTRUCTED);
 
     if (bootverbose)
         printf("exfat: [exfat_get_node] node setup complete\n");
